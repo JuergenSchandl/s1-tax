@@ -6,7 +6,7 @@
   var CFG = window.S1_CONFIG || {};
   var L = window.L;
   var APP = window.APP = {
-    VERSION: '2026.11.20n',
+    VERSION: '2026.11.20o',
     CFG: CFG,
     sb: null,
     D: { belege: [], bank: [], ausgang: [], kunden: [], monate: [], einst: {}, fragen: [], hinweise: {}, members: [] },
@@ -115,7 +115,10 @@
     ['netto', 'ust', 'brutto', 'steuersatz', 'betrag', 'bezahlt_betrag', 'uva_zahllast', 'uva_bezahlt'].forEach(function (k) { if (r[k] !== null && r[k] !== undefined && typeof r[k] === 'string') r[k] = Number(r[k]); });
     return r;
   }
+  /* als Post vom Amt abgelegt: bleibt storniert in der Datenbank, die App zeigt ihn nicht */
+  APP.istPost = function (b) { return !!(b && b.storniert && b.lesung && b.lesung.post); };
   function merge(table, rows) {
+    if (table === 'belege') { var weg = rows.filter(APP.istPost); if (weg.length) { D.belege = D.belege.filter(function (x) { return !weg.some(function (w) { return w.id === x.id; }); }); rows = rows.filter(function (r) { return !APP.istPost(r); }); } }
     if (table === 'einstellungen') { rows.forEach(function (r) { D.einst[r.key] = r.value; }); return; }
     if (table === 'hinweise') { rows.forEach(function (r) { D.hinweise[r.key] = r; }); return; }
     var list = D[table], k = KEYS[table];
@@ -161,7 +164,7 @@
       alle('kunden', ['kurz']), alle('monate', ['jahr', 'monat']), alle('einstellungen'), alle('fragen', ['created_at']),
       alle('hinweise'), alle('members')
     ]).then(function (r) {
-      D.belege = r[0].map(function (x) { return zahlen('belege', x); });
+      D.belege = r[0].filter(function (x) { return !APP.istPost(x); }).map(function (x) { return zahlen('belege', x); });
       D.bank = r[1].map(function (x) { return zahlen('bank', x); });
       D.ausgang = r[2].map(function (x) { return zahlen('ausgang', x); });
       D.kunden = r[3]; D.monate = r[4].map(function (x) { return zahlen('monate', x); });

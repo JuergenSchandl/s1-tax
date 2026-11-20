@@ -113,10 +113,12 @@
     var ext = String(f.datei).split('.').pop(), stelle = f.lieferant || 'Behörde', titel = f.text || 'Schreiben';
     var j = f.datum ? +f.datum.slice(0, 4) : f.jahr;
     var eintrag = { id: APP.uuid(), jahr: j, pfad: f.datei, name: (stelle + ' – ' + titel + '.' + ext).replace(/[\\/:*?"<>|]+/g, '-'), am: L.heute(), von: (S.me || {}).name || null, art: 'behoerde', stelle: stelle, titel: titel, datum: f.datum || null, info: {} };
+    /* Belege werden nie gelöscht: storniert und als Post markiert, die App blendet sie aus */
     return APP.einstellung('unterlagen', (D.einst.unterlagen || []).concat([eintrag])).then(function () {
-      return APP.sb.from('fragen').delete().in('datensatz', rows.map(function (b) { return b.id; }));
-    }).then(function () {
-      return APP.sb.from('belege').delete().eq('gruppe', g);
+      return APP.sb.from('fragen').update({ erledigt: true, antwort: 'Post vom Amt, bei den Unterlagen abgelegt.' }).in('datensatz', rows.map(function (b) { return b.id; })).eq('erledigt', false);
+    }).then(function (res) {
+      if (res && res.error) throw res.error;
+      return APP.sb.from('belege').update({ storniert: true, notiz: 'Post vom Amt, bei den Unterlagen abgelegt', lesung: Object.assign({}, f.lesung || {}, { post: eintrag.id }) }).eq('gruppe', g);
     }).then(function (res) {
       if (res && res.error) throw res.error;
       D.belege = D.belege.filter(function (b) { return b.gruppe !== g; });

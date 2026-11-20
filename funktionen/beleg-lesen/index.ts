@@ -145,8 +145,10 @@ async function alsUnterlage(sb: any, row: any, r: any, person: string) {
   if (fa && ak && (!st.abgabenkonto_stand || ak.stand > st.abgabenkonto_stand)) { st.abgabenkonto_guthaben = ak.guthaben ? ak.betrag : 0; st.abgabenkonto_stand = ak.stand; geaendert.push("Abgabenkonto " + (ak.guthaben ? "Guthaben " + eur(ak.betrag) : "ohne Guthaben")); }
   if (geaendert.length) await sb.from("einstellungen").upsert({ key: "steuer", value: st });
 
-  await sb.from("fragen").delete().eq("datensatz", row.id);
-  await sb.from("belege").delete().eq("gruppe", row.gruppe);
+  // Belege werden nie gelöscht: storniert und als Post markiert, die App blendet sie aus
+  await sb.from("fragen").update({ erledigt: true, antwort: "Post vom Amt, bei den Unterlagen abgelegt." }).eq("datensatz", row.id).eq("erledigt", false);
+  const { error: e2 } = await sb.from("belege").update({ storniert: true, notiz: "Post vom Amt, bei den Unterlagen abgelegt", lesung: { ...(row.lesung || {}), post: eintrag.id } }).eq("gruppe", row.gruppe);
+  if (e2) return { error: e2.message };
   return { ok: true, unterlage: eintrag, steuer: geaendert.length ? st : null, geaendert };
 }
 const ARTEN = ["vst", "rc", "ig", "ausland", "keine"];
