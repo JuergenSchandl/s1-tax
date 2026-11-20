@@ -139,6 +139,7 @@
         u.text = 'wird gelesen'; APP.render();
         return APP.belegAnlegen(f, Object.assign({ jahr: ziel.jahr, monat: ziel.monat }, opt)).then(function (r) {
           if (r && r.wartet) { u.status = 'wartet'; return; }
+          if (r.abgelegt && r.r && r.r.schon) { u.gruppe = null; u.status = 'fehler'; u.text = 'schon abgelegt: ' + (r.abgelegt.stelle || 'Behörde') + ' – ' + (r.abgelegt.titel || ''); APP.toast(APP.postText(r.r)); return r; }
           if (r.abgelegt) { u.gruppe = null; u.status = 'fertig'; u.text = 'Post von ' + (r.abgelegt.stelle || 'Behörde') + ', bei den Unterlagen abgelegt'; APP.toast(APP.postText(r.r)); return r; }
           u.gruppe = r.gruppe;
           if (r.leseFehler) { u.status = 'fehler'; u.text = r.leseFehler.length > 60 ? 'selbst ausfüllen' : r.leseFehler; return r; }
@@ -480,6 +481,7 @@
   };
   function postText(r) {
     var u = r && r.unterlage || {};
+    if (r && r.schon) return 'Dieses Schreiben ist schon bei den Unterlagen ' + u.jahr + ' abgelegt (' + (u.stelle || '') + ' – ' + (u.titel || '') + '). Nichts doppelt.';
     return 'Post von ' + (u.stelle || 'Behörde') + ' bei den Unterlagen ' + u.jahr + ' abgelegt' + (r && r.geaendert && r.geaendert.length ? '. Übernommen: ' + r.geaendert.join(', ') : '') + '.';
   }
   APP.postText = postText;

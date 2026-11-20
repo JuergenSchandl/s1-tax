@@ -125,12 +125,23 @@ async function alsUnterlage(sb: any, row: any, r: any, person: string) {
   const nz = b.naechste_zahlung && zahl(b.naechste_zahlung.betrag) > 0 && ISO.test(b.naechste_zahlung.faellig || "") ? { betrag: zahl(b.naechste_zahlung.betrag), faellig: b.naechste_zahlung.faellig, was: String(b.naechste_zahlung.was || "").slice(0, 80) } : null;
   const ak = b.abgabenkonto && ISO.test(b.abgabenkonto.stand || "") ? { stand: b.abgabenkonto.stand, betrag: Math.abs(zahl(b.abgabenkonto.betrag)), guthaben: !!b.abgabenkonto.guthaben } : null;
   const eintrag = {
-    id: crypto.randomUUID(), jahr, pfad: row.datei, name: `${stelle} – ${titel}.${ext}`.replace(/[\\/:*?"<>|]+/g, "-"), am: heute,
+    id: crypto.randomUUID(), jahr, pfad: row.datei, hash: (row.lesung && row.lesung.hash) || null, name: `${stelle} – ${titel}.${ext}`.replace(/[\\/:*?"<>|]+/g, "-"), am: heute,
     von: person === "j" ? "Jürgen" : person === "d" ? "Dagmar" : person, art: "behoerde", stelle, titel, datum,
     info: { naechste_zahlung: nz, est_vz_jahresbetrag: zahl(b.est_vz_jahresbetrag) || null, svs_quartalsbetrag: zahl(b.svs_quartalsbetrag) || null, abgabenkonto: ak },
   };
   const { data: u } = await sb.from("einstellungen").select("value").eq("key", "unterlagen").maybeSingle();
   const liste = Array.isArray(u && u.value) ? u.value : [];
+  // dasselbe Schreiben schon abgelegt (z. B. einmal als PDF, einmal als Foto): nichts doppelt ablegen
+  // deno-lint-ignore no-explicit-any
+  const gleich = liste.find((x: any) => x && x.art === "behoerde" && String(x.stelle || "").toLowerCase() === stelle.toLowerCase() && x.datum === datum &&
+    (String(x.titel || "").toLowerCase() === titel.toLowerCase() ||
+      (nz && x.info && x.info.naechste_zahlung && zahl(x.info.naechste_zahlung.betrag) === nz.betrag && x.info.naechste_zahlung.faellig === nz.faellig)));
+  if (gleich) {
+    await sb.from("fragen").update({ erledigt: true, antwort: "Schon bei den Unterlagen abgelegt." }).eq("datensatz", row.id).eq("erledigt", false);
+    const { error: eg } = await sb.from("belege").update({ storniert: true, notiz: "Doppelt: schon bei den Unterlagen abgelegt", lesung: { ...(row.lesung || {}), post: gleich.id } }).eq("gruppe", row.gruppe);
+    if (eg) return { error: eg.message };
+    return { ok: true, unterlage: gleich, schon: true, steuer: null, geaendert: [] };
+  }
   liste.push(eintrag);
   const { error: e1 } = await sb.from("einstellungen").upsert({ key: "unterlagen", value: liste });
   if (e1) return { error: e1.message };

@@ -61,6 +61,13 @@
       hash = h;
       var doppelt = h && D.belege.find(function (x) { return x.lesung && x.lesung.hash === h && !x.storniert; });
       if (doppelt) { var e = new Error('Diesen Beleg gibt es schon (' + (doppelt.lieferant || 'ohne Namen') + ', ' + L.MONATE[doppelt.monat] + ' ' + doppelt.jahr + ').'); e.doppelt = doppelt; throw e; }
+      /* schon als Post abgelegt oder als falsch entfernt */
+      var weg = h && APP.ausgeblendet[h];
+      if (weg) {
+        var u = weg.post && (D.einst.unterlagen || []).find(function (x) { return x.pfad === weg.datei; });
+        var e2 = new Error(weg.post ? 'Schon bei den Unterlagen abgelegt' + (u ? ': ' + (u.stelle || '') + ' – ' + (u.titel || u.name) : '') + '.' : weg.grund === 'nicht an S1 Secure' ? 'Diese Rechnung wurde schon entfernt, weil sie nicht an S1 Secure geht.' : 'Diesen Beleg gibt es schon.');
+        e2.doppelt = true; throw e2;
+      }
       if (!navigator.onLine) {
         return APP.idb.put('warteschlange', { id: APP.uuid(), blob: blob, name: file.name || 'Foto.jpg', type: blob.type, jahr: jahr, monat: monat, zahlung: opt.zahlung || 'bar', quelle: opt.quelle || 'scan', created: Date.now() })
           .then(function () { return zaehleWarteschlange(); }).then(function () { return { wartet: true }; });
@@ -80,9 +87,10 @@
     return APP.fn('beleg-lesen', { id: row.id, bank: bank ? { datum: bank.datum, betrag: bank.betrag, name: bank.name } : null }).then(function (r) {
       /* Post von Finanzamt oder SVS: liegt jetzt bei den Unterlagen, der Beleg ist weg */
       if (r && r.unterlage) {
+        APP.merkeAusgeblendet(Object.assign({}, row, { lesung: Object.assign({}, row.lesung || {}, { post: r.unterlage.id }), datei: r.schon ? r.unterlage.pfad : row.datei }));
         D.belege = D.belege.filter(function (b) { return b.gruppe !== row.gruppe; });
         D.fragen = D.fragen.filter(function (f) { return f.datensatz !== row.id; });
-        D.einst.unterlagen = (D.einst.unterlagen || []).filter(function (u) { return u.pfad !== r.unterlage.pfad; }).concat([r.unterlage]);
+        D.einst.unterlagen = (D.einst.unterlagen || []).filter(function (u) { return u.pfad !== r.unterlage.pfad && u.id !== r.unterlage.id; }).concat([r.unterlage]);
         if (r.steuer) D.einst.steuer = r.steuer;
         return Object.assign(row, { r: r, abgelegt: r.unterlage });
       }
@@ -139,6 +147,7 @@
       return APP.sb.from('belege').update({ storniert: true, notiz: 'Post vom Amt, bei den Unterlagen abgelegt', lesung: Object.assign({}, f.lesung || {}, { post: eintrag.id }) }).eq('gruppe', g);
     }).then(function (res) {
       if (res && res.error) throw res.error;
+      APP.merkeAusgeblendet(Object.assign({}, f, { lesung: Object.assign({}, f.lesung || {}, { post: eintrag.id }) }));
       D.belege = D.belege.filter(function (b) { return b.gruppe !== g; });
       D.fragen = D.fragen.filter(function (x) { return !rows.some(function (b) { return b.id === x.datensatz; }); });
       return eintrag;

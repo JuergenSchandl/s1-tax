@@ -6,7 +6,7 @@
   var CFG = window.S1_CONFIG || {};
   var L = window.L;
   var APP = window.APP = {
-    VERSION: '2026.11.20s',
+    VERSION: '2026.11.20t',
     CFG: CFG,
     sb: null,
     D: { belege: [], bank: [], ausgang: [], kunden: [], monate: [], einst: {}, fragen: [], hinweise: {}, members: [] },
@@ -117,8 +117,13 @@
   }
   /* als Post vom Amt abgelegt oder falsch hineingezogen: bleibt storniert in der Datenbank, die App zeigt ihn nicht */
   APP.istPost = function (b) { return !!(b && b.storniert && b.lesung && (b.lesung.post || b.lesung.weg)); };
+  /* Fingerabdrücke der ausgeblendeten Dateien: dieselbe Datei noch einmal hochladen wird erkannt */
+  APP.ausgeblendet = {};
+  APP.merkeAusgeblendet = function (b) {
+    if (b && b.lesung && b.lesung.hash) APP.ausgeblendet[b.lesung.hash] = { post: !!b.lesung.post, grund: b.lesung.weg && b.lesung.weg.grund, datei: b.datei, lieferant: b.lieferant };
+  };
   function merge(table, rows) {
-    if (table === 'belege') { var weg = rows.filter(APP.istPost); if (weg.length) { D.belege = D.belege.filter(function (x) { return !weg.some(function (w) { return w.id === x.id; }); }); rows = rows.filter(function (r) { return !APP.istPost(r); }); } }
+    if (table === 'belege') { var weg = rows.filter(APP.istPost); weg.forEach(APP.merkeAusgeblendet); if (weg.length) { D.belege = D.belege.filter(function (x) { return !weg.some(function (w) { return w.id === x.id; }); }); rows = rows.filter(function (r) { return !APP.istPost(r); }); } }
     if (table === 'einstellungen') { rows.forEach(function (r) { D.einst[r.key] = r.value; }); return; }
     if (table === 'hinweise') { rows.forEach(function (r) { D.hinweise[r.key] = r; }); return; }
     var list = D[table], k = KEYS[table];
@@ -164,7 +169,8 @@
       alle('kunden', ['kurz']), alle('monate', ['jahr', 'monat']), alle('einstellungen'), alle('fragen', ['created_at']),
       alle('hinweise'), alle('members')
     ]).then(function (r) {
-      D.belege = r[0].filter(function (x) { return !APP.istPost(x); }).map(function (x) { return zahlen('belege', x); });
+      APP.ausgeblendet = {};
+      D.belege = r[0].filter(function (x) { if (APP.istPost(x)) { APP.merkeAusgeblendet(x); return false; } return true; }).map(function (x) { return zahlen('belege', x); });
       D.bank = r[1].map(function (x) { return zahlen('bank', x); });
       D.ausgang = r[2].map(function (x) { return zahlen('ausgang', x); });
       D.kunden = r[3]; D.monate = r[4].map(function (x) { return zahlen('monate', x); });
