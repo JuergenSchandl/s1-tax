@@ -295,11 +295,13 @@ Deno.serve(async (req) => {
     const { data: k1 } = await sb.from("belege").select(SEL).neq("gruppe", row.gruppe).eq("storniert", false).eq("rechnungsnr", rnr).limit(5);
     treffer = (k1 || []).find((k) => L.aehnlich(k.lieferant, r.lieferant)) || null;
     if (!treffer && rnr.length >= 6) {
-      const { data: b1 } = await sb.from("bank").select("beleg_gruppe").not("beleg_gruppe", "is", null).ilike("info", `%${rnr}%`).limit(3);
+      // Rechnungsnummer im Buchungstext: nur als ganze Nummer (nicht "1/2026" in "U 01/2026") und nur beim selben Lieferanten
+      const ganz = new RegExp(`(^|[^0-9A-Za-z])${rnr.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}($|[^0-9A-Za-z])`, "i");
+      const { data: b1 } = await sb.from("bank").select("beleg_gruppe, info").not("beleg_gruppe", "is", null).ilike("info", `%${rnr}%`).limit(5);
       for (const b of b1 || []) {
-        if (b.beleg_gruppe === row.gruppe) continue;
+        if (b.beleg_gruppe === row.gruppe || !ganz.test(String(b.info || ""))) continue;
         const { data: g } = await sb.from("belege").select(SEL).eq("gruppe", b.beleg_gruppe).eq("storniert", false).limit(1);
-        if (g && g[0]) { treffer = g[0]; break; }
+        if (g && g[0] && L.aehnlich(g[0].lieferant, r.lieferant)) { treffer = g[0]; break; }
       }
     }
   }

@@ -69,7 +69,7 @@
     if (!S.uploads.length) return '';
     return '<div class="card"><div class="head"><h2>Hochgeladen</h2><button type="button" class="btn small ghost" data-act="uploads-leeren">Liste leeren</button></div><div class="prog">' +
       S.uploads.map(function (u) {
-        var st = u.status === 'fertig' ? '<span class="chip ok">' + h(u.text || 'gelesen') + '</span>' : u.status === 'fehler' ? '<span class="chip bad">' + h(u.text) + '</span>' : u.status === 'wartet' ? '<span class="chip yel">wartet auf Netz</span>' : '<span class="mut"><span class="spin"></span> ' + h(u.text || 'lädt') + '</span>';
+        var st = u.status === 'fertig' ? '<span class="chip ok">' + h(u.text || 'gelesen') + '</span>' : u.status === 'fehler' ? (u.ziel ? '<button type="button" class="chip bad" data-act="doppelt-zeigen" data-g="' + h(u.gruppe || '') + '" data-ziel="' + h(u.ziel) + '" title="Bestehenden Beleg ansehen">' + h(u.text) + ' · ansehen</button>' : '<span class="chip bad">' + h(u.text) + '</span>') : u.status === 'wartet' ? '<span class="chip yel">wartet auf Netz</span>' : '<span class="mut"><span class="spin"></span> ' + h(u.text || 'lädt') + '</span>';
         return '<div class="row"><span>' + (u.gruppe ? '<a href="#" data-act="beleg" data-g="' + u.gruppe + '">' + h(u.name) + '</a>' : h(u.name)) + '</span>' + st + '</div>';
       }).join('') + '</div></div>';
   }
@@ -144,10 +144,10 @@
           u.gruppe = r.gruppe;
           if (r.leseFehler) { u.status = 'fehler'; u.text = r.leseFehler.length > 60 ? 'selbst ausfüllen' : r.leseFehler; return r; }
           u.status = 'fertig'; u.text = (r.lieferant || 'gelesen') + ' · ' + L.eur(r.brutto) + (r.verschoben ? ' · nach ' + r.verschoben : '') + (r.auto ? ' · bestätigt' : '');
-          if (r.r && r.r.doppelt) { u.status = 'fehler'; u.text = 'gibt es vermutlich schon: ' + r.r.doppelt; }
+          if (r.r && r.r.doppelt) { u.status = 'fehler'; u.text = 'gibt es vermutlich schon: ' + r.r.doppelt; u.ziel = r.r.doppelt_gruppe || null; }
           if (r.r && r.r.fremd) { u.status = 'fehler'; u.text = 'geht an ' + r.r.fremd + ', nicht an S1 Secure'; APP.toast('Diese Rechnung geht an ' + r.r.fremd + ', nicht an S1 Secure. Sie zählt vorerst nicht mit.', { bad: true }); }
           return r;
-        }).catch(function (e) { u.status = 'fehler'; u.text = e && e.message || String(e); });
+        }).catch(function (e) { u.status = 'fehler'; u.text = e && e.message || String(e); if (e && e.doppelt && e.doppelt.gruppe) u.ziel = e.doppelt.gruppe; });
       });
     }, Promise.resolve()).then(function () { APP.render(); });
   }
@@ -245,7 +245,7 @@
       if (v.gruppen && neuP.some(function (p) { return !v.paare[p]; }))
         bisher = '<div class="note warn"><b>Bisher bei ' + h(g.lieferant) + ' so gebucht:</b> ' + Object.keys(v.paare).sort(function (a, b) { return v.paare[b] - v.paare[a]; }).slice(0, 3).map(function (p) { return L.paarText(p, v.paare[p]); }).join('; ') + '. Deshalb bitte prüfen.</div>';
     }
-    if (!l || !l.ki) return autoNote + bisher;
+    if (!l || !l.ki) return zurueckNote(g) + autoNote + bisher;
     var k = l.ki, t = [];
     if (k.begruendung) t.push(h(k.begruendung));
     if (k.regel) t.push('<b>Regel:</b> ' + h(k.regel));
@@ -257,9 +257,9 @@
     var doppel = '';
     if (k.doppelt && g.bestaetigt === false && !g.storniert) {
       doppel = '<div class="note warn"><b>Diesen Beleg gibt es vermutlich schon:</b> ' + h(k.doppelt) + '. Er zählt deshalb vorerst nirgends mit.' +
-        (dg ? '<div class="chips" style="margin-top:8px"><button type="button" class="btn small pri" data-act="doppelt-anhaengen" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Datei an ' + (L.belegNr(dg) ? 'Beleg ' + L.belegNr(dg) : 'den bestehenden Beleg') + ' hängen</button><button type="button" class="btn small" data-act="beleg" data-g="' + dg.gruppe + '">Bestehenden Beleg ansehen</button><button type="button" class="btn small ghost" data-act="doppelt-nein" data-g="' + g.gruppe + '">Ist kein Doppel</button></div>' : '') + '</div>';
+        (dg ? '<div class="chips" style="margin-top:8px"><button type="button" class="btn small pri" data-act="doppelt-anhaengen" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Datei an ' + (L.belegNr(dg) ? 'Beleg ' + L.belegNr(dg) : 'den bestehenden Beleg') + ' hängen</button><button type="button" class="btn small" data-act="doppelt-zeigen" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Bestehenden Beleg ansehen</button><button type="button" class="btn small ghost" data-act="doppelt-nein" data-g="' + g.gruppe + '">Ist kein Doppel</button></div>' : '') + '</div>';
     }
-    return autoNote + fremdNote + (t.length ? '<div class="note blue"><b>Von der App gelesen.</b> ' + t.join(' ') + '</div>' : '') + bisher + doppel;
+    return zurueckNote(g) + autoNote + fremdNote + (t.length ? '<div class="note blue"><b>Von der App gelesen.</b> ' + t.join(' ') + '</div>' : '') + bisher + doppel;
   }
   function fragenBlock(tabelle, ids) {
     var fr = D.fragen.filter(function (f) { return f.tabelle === tabelle && ids.indexOf(f.datensatz) >= 0; });
@@ -450,6 +450,21 @@
         if (r.leseFehler) APP.toast(r.leseFehler, { bad: true }); else APP.toast('Neu gelesen.'); APP.belegDialog(g); APP.render();
       });
     });
+  };
+  /* Verdacht auf Doppel: bestehenden Beleg direkt zeigen, mit Weg zurück zum neuen */
+  function zurueckNote(g) {
+    var von = S.doppelVon;
+    if (!von || von.ziel !== g.gruppe || !von.g) return '';
+    var n = L.gruppen(D.belege, function (b) { return b.gruppe === von.g; })[0];
+    if (!n) return '';
+    return '<div class="note blue"><b>Das ist der bestehende Beleg.</b> Der neue: ' + h(n.lieferant || 'ohne Namen') + (n.datum ? ' vom ' + L.datum(n.datum) : '') + ' über ' + L.eur(n.brutto) + '.' +
+      '<div class="chips" style="margin-top:8px"><button type="button" class="btn small" data-act="beleg" data-g="' + von.g + '">Zurück zum neuen Beleg</button></div></div>';
+  }
+  APP.A['doppelt-zeigen'] = function (el) {
+    var ziel = el.dataset.ziel;
+    if (!D.belege.some(function (b) { return b.gruppe === ziel; })) { APP.toast('Den bestehenden Beleg finde ich nicht mehr.', { bad: true }); return; }
+    S.doppelVon = { g: el.dataset.g || null, ziel: ziel };
+    APP.belegDialog(ziel);
   };
   /* Rechnung an jemand anderen: entfernen (storniert und ausgeblendet) oder doch für S1 Secure */
   function fremdFragenErledigen(rows, antwort) {

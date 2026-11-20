@@ -239,3 +239,4 @@ img.vorschau-datei { object-fit: contain; }
   .btn { white-space: normal; text-align: center; line-height: 1.25; padding-top: 6px; padding-bottom: 6px; }
   #toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
 }
+button.chip.bad { background: var(--badBg); color: var(--bad); border-color: transparent; white-space: normal; text-align: left; height: auto; padding: 6px 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
