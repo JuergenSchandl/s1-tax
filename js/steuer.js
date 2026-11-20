@@ -117,6 +117,7 @@
         '<div class="tile dark"><span class="k">Frei verfügbar</span><span class="v">' + L.eur(r.frei) + '</span><span class="u">Kontostand minus Rücklage</span></div></div>' +
         '<div class="cols"><div class="wide"><div class="card flat"><div class="head"><h2>Rücklage</h2><span class="s">Stand ' + L.datum(heute) + '</span></div><div class="list">' +
         (r.posten.length ? r.posten.map(function (p) { return '<div class="item"><div class="grow"><span class="t">' + h(p.titel) + '</span><span class="s">fällig ' + L.datum(p.datum) + (p.hinweis ? ' · ' + h(p.hinweis) : '') + '</span></div><span class="amt">' + L.eur(p.betrag) + '</span></div>'; }).join('') : '<div class="empty">Nichts offen.</div>') + '</div></div>' +
+        postKarte() +
         '<div class="card flat" style="margin-top:20px"><div class="head"><h2>Termine ' + j + '</h2></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Datum</th><th>Was</th><th class="r">Betrag</th><th>Status</th></tr></thead><tbody>' + tRows + '</tbody></table></div></div></div>' +
         '<div class="narrow"><div class="card"><div class="head"><h2>Jahresvorschau ' + j + '</h2></div><div style="font-size:15px">' + ergebnis + ' bei der Einkommensteuer.</div>' +
         '<div class="tbl-wrap"><table class="tbl"><thead><tr><th></th><th class="r">bisher (' + v.monate + ' Mon.)</th><th class="r">aufs Jahr</th></tr></thead><tbody>' +
@@ -167,6 +168,19 @@
       });
     };
   };
+  /* Post von Finanzamt und SVS: wird beim Hochladen erkannt und hier abgelegt */
+  function postKarte() {
+    var liste = (D.einst.unterlagen || []).filter(function (u) { return u.art === 'behoerde'; })
+      .sort(function (a, b) { return String(b.datum || b.am).localeCompare(String(a.datum || a.am)); });
+    var zeig = S.allePost ? liste : liste.slice(0, 6);
+    return '<div class="card flat" style="margin-top:20px"><div class="head"><h2>Post von Finanzamt und SVS</h2>' + (liste.length > 6 && !S.allePost ? '<button type="button" class="btn small ghost" data-act="post-alle">alle ' + liste.length + '</button>' : '') + '</div>' +
+      (zeig.length ? '<div class="list">' + zeig.map(function (u) {
+        var i = u.info || {}, z = i.naechste_zahlung;
+        return '<div class="item"><div class="grow"><span class="t">' + h(u.titel || u.name) + '</span><span class="s">' + h(u.stelle || '') + (u.datum ? ' · ' + L.datum(u.datum) : '') + (z ? ' · ' + L.eur(z.betrag) + ' fällig ' + L.datum(z.faellig) : '') + (i.abgabenkonto ? ' · Abgabenkonto ' + (i.abgabenkonto.guthaben ? 'Guthaben ' + L.eur(i.abgabenkonto.betrag) : 'Rückstand ' + L.eur(i.abgabenkonto.betrag)) : '') + '</span></div>' +
+          '<button type="button" class="btn small" data-act="datei-oeffnen" data-p="' + h(u.pfad) + '">Öffnen</button></div>';
+      }).join('') + '</div>' : '<div class="empty">Bescheide und Benachrichtigungen von Finanzamt und SVS einfach wie einen Beleg hochladen. Die App erkennt sie, legt sie hier ab und übernimmt Vorauszahlungen und Guthaben.</div>') + '</div>';
+  }
+  APP.A['post-alle'] = function () { S.allePost = true; APP.render(); };
   APP.A['steuer-werte'] = function () {
     var st = D.einst.steuer || {}, f = function (k, l, hint) { return '<label class="f">' + l + '<input class="in" name="' + k + '" value="' + h(st[k] === undefined || st[k] === null ? '' : (typeof st[k] === 'number' ? L.fmt(st[k]) : st[k])) + '">' + (hint ? '<span class="hint">' + hint + '</span>' : '') + '</label>'; };
     APP.modal({

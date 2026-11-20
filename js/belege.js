@@ -139,6 +139,7 @@
         u.text = 'wird gelesen'; APP.render();
         return APP.belegAnlegen(f, Object.assign({ jahr: ziel.jahr, monat: ziel.monat }, opt)).then(function (r) {
           if (r && r.wartet) { u.status = 'wartet'; return; }
+          if (r.abgelegt) { u.gruppe = null; u.status = 'fertig'; u.text = 'Post von ' + (r.abgelegt.stelle || 'Behörde') + ', bei den Unterlagen abgelegt'; APP.toast(APP.postText(r.r)); return r; }
           u.gruppe = r.gruppe;
           if (r.leseFehler) { u.status = 'fehler'; u.text = r.leseFehler.length > 60 ? 'selbst ausfüllen' : r.leseFehler; return r; }
           u.status = 'fertig'; u.text = (r.lieferant || 'gelesen') + ' · ' + L.eur(r.brutto) + (r.verschoben ? ' · nach ' + r.verschoben : '');
@@ -229,7 +230,7 @@
   function dateiVorschau(g) {
     if (!g.datei) return '<div class="note">Keine Datei. ' + (g.zahlung === 'bank' ? 'Der Kontoauszug gilt als Beleg, oder du lädst die Rechnung nach.' : '') + '<div style="margin-top:8px"><button type="button" class="btn small" data-act="datei-ersetzen" data-g="' + g.gruppe + '">Datei hinzufügen</button></div></div>';
     return '<div id="vorschau" class="vorschau-datei" style="display:flex;align-items:center;justify-content:center"><span class="spin"></span></div>' +
-      '<div class="chips"><button type="button" class="btn small" data-act="datei-oeffnen" data-p="' + h(g.datei) + '">In neuem Fenster öffnen</button><button type="button" class="btn small ghost" data-act="datei-ersetzen" data-g="' + g.gruppe + '">Datei ersetzen</button></div>';
+      '<div class="chips"><button type="button" class="btn small" data-act="datei-oeffnen" data-p="' + h(g.datei) + '">In neuem Fenster öffnen</button><button type="button" class="btn small ghost" data-act="datei-ersetzen" data-g="' + g.gruppe + '">Datei ersetzen</button>' + (!g.nr ? '<button type="button" class="btn small ghost" data-act="als-post" data-g="' + g.gruppe + '">Kein Beleg (Post vom Amt)</button>' : '') + '</div>';
   }
   function lesungHinweis(g) {
     var l = g.rows[0].lesung;
@@ -430,8 +431,23 @@
   APP.A['beleg-lesen'] = function (el) {
     var g = el.dataset.g, row = D.belege.find(function (b) { return b.gruppe === g && !b.storniert; }) || D.belege.find(function (b) { return b.gruppe === g; });
     APP.lauf(el, function () {
-      return APP.belegLesen(row).then(function (r) { if (r.leseFehler) APP.toast(r.leseFehler, { bad: true }); else APP.toast('Neu gelesen.'); APP.belegDialog(g); APP.render(); });
+      return APP.belegLesen(row).then(function (r) {
+        if (r.abgelegt) { APP.schliessen(); APP.toast(postText(r.r)); APP.render(); return; }
+        if (r.leseFehler) APP.toast(r.leseFehler, { bad: true }); else APP.toast('Neu gelesen.'); APP.belegDialog(g); APP.render();
+      });
     });
+  };
+  function postText(r) {
+    var u = r && r.unterlage || {};
+    return 'Post von ' + (u.stelle || 'Behörde') + ' bei den Unterlagen ' + u.jahr + ' abgelegt' + (r && r.geaendert && r.geaendert.length ? '. Übernommen: ' + r.geaendert.join(', ') : '') + '.';
+  }
+  APP.postText = postText;
+  APP.A['als-post'] = function (el) {
+    var g = el.dataset.g;
+    APP.bestaetigen('Das ist kein Beleg, sondern Post vom Amt (z. B. Bescheid oder Benachrichtigung)? Die Datei kommt zu den Unterlagen, der Beleg verschwindet.', 'Als Post ablegen').then(function (ok) {
+      if (!ok) return;
+      return APP.alsPostAblegen(g).then(function (u) { APP.schliessen(); APP.toast('Bei den Unterlagen ' + u.jahr + ' abgelegt.'); APP.render(); });
+    }).catch(APP.fehler);
   };
   APP.A['datei-ersetzen'] = function (el) {
     var i = document.getElementById('f-ersetzen'); i.value = ''; i.dataset.g = el.dataset.g; i.click();

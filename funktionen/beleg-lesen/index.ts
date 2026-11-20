@@ -37,7 +37,7 @@ const KONTEN_HAEUFIG: Record<number, string> = {
 };
 
 function prompt(verlauf: string, bank: { datum?: string; betrag?: number; name?: string } | null) {
-  return `Du liest einen Beleg (Rechnung, Kassabon oder Quittung) für das österreichische Einzelunternehmen
+  return `Du liest einen Beleg (Rechnung, Kassabon oder Quittung) oder ein Schreiben einer Behörde für das österreichische Einzelunternehmen
 S1 Secure e.U. (Inhaber Jürgen Schandl, Doppelngasse 113, 3400 Klosterneuburg, UID ATU68636158).
 Die Firma versteuert nach vereinnahmten Entgelten und ist vorsteuerabzugsberechtigt.
 ${bank ? `Diese Rechnung wurde am ${bank.datum} mit ${Math.abs(Number(bank.betrag)).toFixed(2)} EUR vom Konto bezahlt (Buchungstext: ${bank.name}).\n` : ""}
@@ -52,6 +52,8 @@ Antworte NUR mit einem JSON-Objekt, ohne Erklärung davor oder danach, in genau 
   "waehrung": "ISO-Währung des Betrags auf dem Beleg, z. B. EUR",
   "fremdbetrag": "Bruttobetrag in Fremdwährung, wenn nicht EUR, sonst null",
   "zahlungsart": "karte, bar, ueberweisung oder null (wie bezahlt wurde)",
+  "dokumentart": "beleg oder behoerde",
+  "behoerde": null,
   "an_s1": "true, wenn die Rechnung an S1 Secure oder Jürgen Schandl geht; false, wenn an jemand anderen; null bei Kassabon ohne Empfänger",
   "zeilen": [ { "konto": 7385, "text": "Bezeichnung", "brutto": 0.00, "netto": 0.00, "ust": 0.00, "steuersatz": 20, "steuerart": "vst" } ],
   "anlage": false,
@@ -83,6 +85,17 @@ ${Object.entries(KONTEN_HAEUFIG).map(([k, v]) => `  ${k} ${v}`).join("\n")}
   spanisch Tarjeta, Datáfono; französisch CB, Carte bancaire). "bar" bei Barzahlung (Bar, Barzahlung, gegeben, Rückgeld, Retour; Contanti,
   Efectivo, Espèces, Cash). "ueberweisung" bei Rechnungen, die per Überweisung, SEPA-Lastschrift, Einzug oder PayPal bezahlt werden oder
   online schon bezahlt sind. null, wenn auf dem Beleg nicht erkennbar.
+- dokumentart: "beleg" bei Rechnung, Kassabon, Quittung oder Gutschrift (etwas wurde gekauft, bezahlt oder verrechnet).
+  "behoerde" bei Post vom Finanzamt, der SVS bzw. Sozialversicherung, der Gemeinde oder der Kammer, die keine Rechnung ist:
+  Bescheid, Benachrichtigung über Vorauszahlungen, Buchungsmitteilung, Beitragsvorschreibung, Kontoauszug des Abgabenkontos, Erinnerung.
+  Bei "behoerde" bleiben "zeilen" leer und "behoerde" wird so ausgefüllt:
+  { "stelle": "Finanzamt" oder "SVS" oder wer es geschickt hat,
+    "titel": "kurz, z. B. Einkommensteuer-Vorauszahlung 2026, Einkommensteuerbescheid 2025, Beitragsvorschreibung 4. Quartal 2026",
+    "steuerjahr": Jahr, um das es geht (Zahl),
+    "est_vz_jahresbetrag": Jahresbetrag der Einkommensteuer-Vorauszahlung oder null,
+    "naechste_zahlung": { "betrag": 0.00, "faellig": "JJJJ-MM-TT", "was": "kurz" } oder null,
+    "svs_quartalsbetrag": Beitrag je Quartal laut SVS oder null,
+    "abgabenkonto": { "stand": "JJJJ-MM-TT", "betrag": 0.00, "guthaben": true oder false } oder null }
 - frage: nur ausfüllen, wenn etwas wirklich unklar ist (z. B. keine Steuer erkennbar, Beleg unleserlich, Rechnung an jemand anderen, privat oder geschäftlich unklar). Kurze Frage an Jürgen auf Deutsch.
 
 Bisherige Zuordnungen dieses Unternehmens (Lieferant → Konto, Bezeichnung, Steuerart), bitte daran orientieren:
@@ -90,6 +103,52 @@ ${verlauf || "(noch keine)"}`;
 }
 
 function zahl(v: unknown) { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; }
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+// Post vom Finanzamt, der SVS oder einer anderen Stelle: kein Beleg, sondern Unterlage.
+// Wird bei den Unterlagen des Jahres abgelegt, Steuerwerte werden nachgezogen, der Beleg verschwindet.
+// deno-lint-ignore no-explicit-any
+async function alsUnterlage(sb: any, row: any, r: any, person: string) {
+  const b = r.behoerde || {};
+  const heute = new Date().toISOString().slice(0, 10);
+  const datum = ISO.test(r.datum || "") ? r.datum : heute;
+  const sj = Number(b.steuerjahr);
+  const jahr = sj >= 2000 && sj <= 2100 ? sj : Number(datum.slice(0, 4));
+  const stelle = String(b.stelle || r.lieferant || "Behörde").slice(0, 60);
+  const titel = String(b.titel || r.text || "Schreiben").slice(0, 120);
+  const ext = String(row.datei).split(".").pop();
+  const nz = b.naechste_zahlung && zahl(b.naechste_zahlung.betrag) > 0 && ISO.test(b.naechste_zahlung.faellig || "") ? { betrag: zahl(b.naechste_zahlung.betrag), faellig: b.naechste_zahlung.faellig, was: String(b.naechste_zahlung.was || "").slice(0, 80) } : null;
+  const ak = b.abgabenkonto && ISO.test(b.abgabenkonto.stand || "") ? { stand: b.abgabenkonto.stand, betrag: Math.abs(zahl(b.abgabenkonto.betrag)), guthaben: !!b.abgabenkonto.guthaben } : null;
+  const eintrag = {
+    id: crypto.randomUUID(), jahr, pfad: row.datei, name: `${stelle} – ${titel}.${ext}`.replace(/[\\/:*?"<>|]+/g, "-"), am: heute,
+    von: person === "j" ? "Jürgen" : person === "d" ? "Dagmar" : person, art: "behoerde", stelle, titel, datum,
+    info: { naechste_zahlung: nz, est_vz_jahresbetrag: zahl(b.est_vz_jahresbetrag) || null, svs_quartalsbetrag: zahl(b.svs_quartalsbetrag) || null, abgabenkonto: ak },
+  };
+  const { data: u } = await sb.from("einstellungen").select("value").eq("key", "unterlagen").maybeSingle();
+  const liste = Array.isArray(u && u.value) ? u.value : [];
+  liste.push(eintrag);
+  const { error: e1 } = await sb.from("einstellungen").upsert({ key: "unterlagen", value: liste });
+  if (e1) return { error: e1.message };
+
+  // Steuerwerte nachziehen, aber nur mit Neuerem als dem, was schon drin ist
+  const { data: s } = await sb.from("einstellungen").select("value").eq("key", "steuer").maybeSingle();
+  const st = { ...((s && s.value) || {}) };
+  const geaendert: string[] = [];
+  const fa = /finanzamt/i.test(stelle), svs = /svs|sozialversicherung/i.test(stelle);
+  const eur = (x: number) => x.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+  const jetzt = Number(heute.slice(0, 4));
+  const vzJahr = zahl(b.est_vz_jahresbetrag);
+  if (fa && vzJahr > 0 && vzJahr < 200000 && jahr === jetzt && vzJahr !== zahl(st.est_vz_jahr)) { st.est_vz_jahr = vzJahr; geaendert.push("ESt-Vorauszahlung im Jahr " + eur(vzJahr)); }
+  if (fa && nz && /einkommensteuer/i.test(titel + " " + nz.was) && nz.faellig >= heute && nz.betrag !== zahl(st.est_vz_quartal)) { st.est_vz_quartal = nz.betrag; geaendert.push("nächste ESt-Vorauszahlung " + eur(nz.betrag)); }
+  const sq = zahl(b.svs_quartalsbetrag);
+  if (svs && sq > 0 && sq < 100000 && sq !== zahl(st.svs_quartal)) { st.svs_quartal = sq; geaendert.push("SVS je Quartal " + eur(sq)); }
+  if (fa && ak && (!st.abgabenkonto_stand || ak.stand > st.abgabenkonto_stand)) { st.abgabenkonto_guthaben = ak.guthaben ? ak.betrag : 0; st.abgabenkonto_stand = ak.stand; geaendert.push("Abgabenkonto " + (ak.guthaben ? "Guthaben " + eur(ak.betrag) : "ohne Guthaben")); }
+  if (geaendert.length) await sb.from("einstellungen").upsert({ key: "steuer", value: st });
+
+  await sb.from("fragen").delete().eq("datensatz", row.id);
+  await sb.from("belege").delete().eq("gruppe", row.gruppe);
+  return { ok: true, unterlage: eintrag, steuer: geaendert.length ? st : null, geaendert };
+}
 const ARTEN = ["vst", "rc", "ig", "ausland", "keine"];
 
 Deno.serve(async (req) => {
@@ -153,6 +212,15 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   let r: any;
   try { r = JSON.parse(m ? m[0] : text); } catch (_) { return json({ error: "Die Antwort war kein gültiges JSON.", detail: text.slice(0, 300) }, 502); }
+
+  // Post von Finanzamt oder SVS (nicht beim Zuordnen zu einer Bankbuchung): als Unterlage ablegen
+  if (r.dokumentart === "behoerde" && !body.bank && !row.nr) {
+    const { data: verb } = await sb.from("bank").select("id").eq("beleg_gruppe", row.gruppe).limit(1);
+    if (!verb || !verb.length) {
+      const erg = await alsUnterlage(sb, row, r, String(person));
+      return json(erg, erg.error ? 500 : 200);
+    }
+  }
 
   // Zeilen säubern: netto + ust = brutto, Steuerart gültig, Auto ohne Vorsteuer
   // deno-lint-ignore no-explicit-any

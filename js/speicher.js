@@ -78,6 +78,14 @@
   /* Die App liest den Beleg (Dienst "beleg-lesen" mit Claude); Ergebnis steht danach in der Datenbank */
   APP.belegLesen = function (row, bank) {
     return APP.fn('beleg-lesen', { id: row.id, bank: bank ? { datum: bank.datum, betrag: bank.betrag, name: bank.name } : null }).then(function (r) {
+      /* Post von Finanzamt oder SVS: liegt jetzt bei den Unterlagen, der Beleg ist weg */
+      if (r && r.unterlage) {
+        D.belege = D.belege.filter(function (b) { return b.gruppe !== row.gruppe; });
+        D.fragen = D.fragen.filter(function (f) { return f.datensatz !== row.id; });
+        D.einst.unterlagen = (D.einst.unterlagen || []).concat([r.unterlage]);
+        if (r.steuer) D.einst.steuer = r.steuer;
+        return Object.assign(row, { r: r, abgelegt: r.unterlage });
+      }
       return APP.sb.from('belege').select('*').eq('gruppe', row.gruppe).then(function (res) {
         if (res.error) throw res.error;
         APP.merge('belege', res.data || []);
@@ -95,6 +103,25 @@
         row.leseFehler = 'Das automatische Lesen ist noch nicht eingerichtet. Bitte die Angaben selbst eintragen.';
       } else row.leseFehler = 'Lesen hat nicht geklappt: ' + (e && e.message || e);
       return row;
+    });
+  };
+
+  /* Beleg von Hand als Post ablegen (z. B. Bescheid, der als Beleg gelesen wurde) */
+  APP.alsPostAblegen = function (g) {
+    var rows = D.belege.filter(function (b) { return b.gruppe === g; }), f = rows[0];
+    if (!f || !f.datei) return Promise.reject(new Error('Der Beleg hat keine Datei.'));
+    var ext = String(f.datei).split('.').pop(), stelle = f.lieferant || 'Behörde', titel = f.text || 'Schreiben';
+    var j = f.datum ? +f.datum.slice(0, 4) : f.jahr;
+    var eintrag = { id: APP.uuid(), jahr: j, pfad: f.datei, name: (stelle + ' – ' + titel + '.' + ext).replace(/[\\/:*?"<>|]+/g, '-'), am: L.heute(), von: (S.me || {}).name || null, art: 'behoerde', stelle: stelle, titel: titel, datum: f.datum || null, info: {} };
+    return APP.einstellung('unterlagen', (D.einst.unterlagen || []).concat([eintrag])).then(function () {
+      return APP.sb.from('fragen').delete().in('datensatz', rows.map(function (b) { return b.id; }));
+    }).then(function () {
+      return APP.sb.from('belege').delete().eq('gruppe', g);
+    }).then(function (res) {
+      if (res && res.error) throw res.error;
+      D.belege = D.belege.filter(function (b) { return b.gruppe !== g; });
+      D.fragen = D.fragen.filter(function (x) { return !rows.some(function (b) { return b.id === x.datensatz; }); });
+      return eintrag;
     });
   };
 
