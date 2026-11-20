@@ -254,6 +254,8 @@
   /* Abschreibung des gekauften Autos: höchstens 40.000 € (Angemessenheitsgrenze), mindestens 8 Jahre,
      im Kaufjahr halbe Jahres-AfA, wenn ab Juli gekauft */
   L.pkwAfa = function (st, jahr) {
+    /* Betrag laut CNC (Anlagenverzeichnis) geht vor der eigenen Rechnung */
+    if (st && L.n(st.pkw_afa_jahr) > 0) return L.r2(L.n(st.pkw_afa_jahr));
     var preis = L.n(st && st.pkw_kaufpreis), datum = st && st.pkw_kaufdatum;
     if (!(preis > 0) || !/^\d{4}-\d{2}/.test(datum || '')) return 0;
     var basis = Math.min(preis, 40000), nd = Math.max(1, L.n(st.pkw_nd) || 8), jahresAfa = basis / nd;
