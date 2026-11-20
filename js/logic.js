@@ -251,6 +251,21 @@
     var k = Number(b.konto);
     return (k >= 7250 && k <= 7260) || k === 7290 || k === 5703 || (k === 7700 && /\b(pkw|kfz|auto)/i.test(String(b.text || '') + ' ' + String(b.lieferant || '')));
   };
+  /* Abschreibung des gekauften Autos: höchstens 40.000 € (Angemessenheitsgrenze), mindestens 8 Jahre,
+     im Kaufjahr halbe Jahres-AfA, wenn ab Juli gekauft */
+  L.pkwAfa = function (st, jahr) {
+    var preis = L.n(st && st.pkw_kaufpreis), datum = st && st.pkw_kaufdatum;
+    if (!(preis > 0) || !/^\d{4}-\d{2}/.test(datum || '')) return 0;
+    var basis = Math.min(preis, 40000), nd = Math.max(1, L.n(st.pkw_nd) || 8), jahresAfa = basis / nd;
+    var kj = Number(datum.slice(0, 4)), km = Number(datum.slice(5, 7)), summe = 0;
+    for (var y = kj; y <= jahr; y++) {
+      var a = Math.min(jahresAfa * (y === kj && km > 6 ? 0.5 : 1), basis - summe);
+      if (a <= 0) return 0;
+      if (y === jahr) return L.r2(a);
+      summe += a;
+    }
+    return 0;
+  };
   L.vorschau = function (D, jahr) {
     var erl = 0, aus = 0, svs = 0, anl = 0, letzt = 0, pkw = 0;
     /* Hochrechnung bis zum letzten Monat mit Kontoauszug: Erlöse und die meisten Ausgaben kommen erst mit dem Auszug.
@@ -269,14 +284,15 @@
       if (L.pkwKosten(b)) pkw += netto;
     });
     var f = 12 / letzt, st = D.einst.steuer || {}, pp = Math.max(0, Math.min(100, L.n(st.pkw_privat)));
-    function rechne(e, a, s, an, kfz) {
-      var pkwPrivat = L.r2(kfz * pp / 100);
-      var gewinn = L.r2(e - a - s - an + pkwPrivat), gfb = gewinn > 0 ? L.r2(Math.min(gewinn, 33000) * 0.15) : 0;
+    var autoAfa = L.pkwAfa(st, jahr);
+    function rechne(e, a, s, an, kfz, afaAuto) {
+      var pkwPrivat = L.r2((kfz + afaAuto) * pp / 100);
+      var gewinn = L.r2(e - a - s - an - afaAuto + pkwPrivat), gfb = gewinn > 0 ? L.r2(Math.min(gewinn, 33000) * 0.15) : 0;
       var weitere = L.n(st.weitere_einkuenfte), eink = Math.max(0, L.r2(gewinn - gfb + weitere));
       var est = L.est(eink, jahr), vz = L.n(st.est_vz_jahr);
-      return { erloese: L.r2(e), ausgaben: L.r2(a), svs: L.r2(s), afa: L.r2(an), pkw: L.r2(kfz), pkwProzent: pp, pkwPrivat: pkwPrivat, gewinn: gewinn, gfb: gfb, weitere: weitere, einkommen: eink, est: est, vz: vz, differenz: L.r2(est - vz) };
+      return { erloese: L.r2(e), ausgaben: L.r2(a), svs: L.r2(s), afa: L.r2(an), afaAuto: L.r2(afaAuto), pkw: L.r2(kfz + afaAuto), pkwProzent: pp, pkwPrivat: pkwPrivat, gewinn: gewinn, gfb: gfb, weitere: weitere, einkommen: eink, est: est, vz: vz, differenz: L.r2(est - vz) };
     }
-    return { monate: letzt, bisher: rechne(erl, aus, svs, anl, pkw), jahr: rechne(erl * f, aus * f, svs * f, anl, pkw * f) };
+    return { monate: letzt, bisher: rechne(erl, aus, svs, anl, pkw, autoAfa * letzt / 12), jahr: rechne(erl * f, aus * f, svs * f, anl, pkw * f, autoAfa) };
   };
 
   /* ---------- Unterlagen für die Steuererklärung (privat, nicht in der Buchhaltung) ---------- */
