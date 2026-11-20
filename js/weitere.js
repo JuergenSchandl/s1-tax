@@ -40,7 +40,7 @@
         '</div>' +
         '<div class="card flat"><div class="head"><h2>Zu erledigen</h2><span class="s">' + (hin.length ? hin.length + ' Punkte' : '') + '</span></div><div class="list">' +
         (hin.length ? hin.map(function (x) { return '<button type="button" class="item" data-go="' + h(ziel(x.ziel)) + '"><div class="grow"><span class="t">' + h(x.titel) + '</span><span class="s">' + h(x.text || '') + '</span></div>' + (x.prio === 0 ? '<span class="chip bad">dringend</span>' : '') + APP.icon('pfeil') + '</button>'; }).join('') : '<div class="empty">Alles erledigt.</div>') +
-        '</div></div>' + (S.uploads && S.uploads.length ? '<div class="card"><div class="head"><h2>Zuletzt hochgeladen</h2></div>' + S.uploads.slice(0, 5).map(function (u) { return '<div class="row" style="display:flex;justify-content:space-between;gap:8px"><a href="#" data-act="beleg" data-g="' + (u.gruppe || '') + '">' + h(u.name) + '</a><span class="s">' + h(u.text || '') + '</span></div>'; }).join('') + '</div>' : '');
+        '</div></div>' + (S.uploads && S.uploads.length ? '<div class="card"><div class="head"><h2>Zuletzt hochgeladen</h2></div>' + S.uploads.slice(0, 5).map(function (u) { return '<div class="row zuletzt"><a href="#" data-act="beleg" data-g="' + (u.gruppe || '') + '">' + h(u.name) + '</a><span class="s">' + h(u.text || '') + '</span></div>'; }).join('') + '</div>' : '');
     }
   };
 

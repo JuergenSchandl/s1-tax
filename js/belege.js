@@ -119,12 +119,18 @@
     ['dragleave', 'drop'].forEach(function (ev) { z.addEventListener(ev, function (e) { e.preventDefault(); z.classList.remove('over'); }); });
     z.addEventListener('drop', function (e) { var f = e.dataTransfer && e.dataTransfer.files; if (f && f.length) hochladen(Array.prototype.slice.call(f), { quelle: 'upload', zahlung: 'bank' }); });
   }
+  /* Kamerafotos heißen am Handy oft nur aus Ziffern (17951919…jpg): dann lieber „Foto 17:27“ zeigen */
+  function anzeigeName(f, opt) {
+    var n = f && f.name || '';
+    if (opt && opt.quelle === 'scan' || !n || /^(\d{8,}|IMG|image|photo|Foto|PXL|DSC)[\w-]*\.(jpe?g|png|heic|webp)$/i.test(n)) return 'Foto ' + new Date().toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
+    return n;
+  }
   function hochladen(files, opt) {
     var x = APP.jm(S.view === 'monat' ? S.arg : '');
     var ziel = opt.heute ? { jahr: +L.heute().slice(0, 4), monat: +L.heute().slice(5, 7) } : x;
     files = files.filter(function (f) { return /pdf|image/.test(f.type) || /\.(pdf|jpe?g|png|heic|webp)$/i.test(f.name); });
     if (!files.length) { APP.toast('Bitte PDF-Dateien oder Fotos verwenden.', { bad: true }); return Promise.resolve(); }
-    var eintraege = files.map(function (f) { var u = { name: f.name || 'Foto', status: 'laedt', text: 'wird hochgeladen' }; S.uploads.unshift(u); return u; });
+    var eintraege = files.map(function (f) { var u = { name: anzeigeName(f, opt), status: 'laedt', text: 'wird hochgeladen' }; S.uploads.unshift(u); return u; });
     APP.render();
     return files.reduce(function (p, f, i) {
       return p.then(function () {
@@ -152,7 +158,7 @@
       if (S.view !== 'monat') { S.uploads = []; }
       /* Foto zuerst zuschneiden und gerade richten (im Gerät, auch ohne Netz) */
       var zs = APP.zuschneiden && APP.zuschnittAn();
-      var platz = zs ? { name: f.name || 'Foto', status: 'laedt', text: 'wird zugeschnitten' } : null;
+      var platz = zs ? { name: anzeigeName(f, { quelle: 'scan' }), status: 'laedt', text: 'wird zugeschnitten' } : null;
       if (platz) { S.uploads.unshift(platz); APP.render(); }
       (zs ? APP.zuschneiden(f) : Promise.resolve({ datei: f })).then(function (z) {
         if (platz) { var ix = S.uploads.indexOf(platz); if (ix >= 0) S.uploads.splice(ix, 1); }
