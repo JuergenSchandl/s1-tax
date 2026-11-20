@@ -170,7 +170,8 @@
   };
   /* Post von Finanzamt und SVS: wird beim Hochladen erkannt und hier abgelegt */
   function postKarte() {
-    var liste = (D.einst.unterlagen || []).filter(function (u) { return u.art === 'behoerde'; })
+    var gesehen = {};
+    var liste = (D.einst.unterlagen || []).filter(function (u) { if (u.art !== 'behoerde' || gesehen[u.pfad]) return false; gesehen[u.pfad] = 1; return true; })
       .sort(function (a, b) { return String(b.datum || b.am).localeCompare(String(a.datum || a.am)); });
     var zeig = S.allePost ? liste : liste.slice(0, 6);
     return '<div class="card flat" style="margin-top:20px"><div class="head"><h2>Post von Finanzamt und SVS</h2>' + (liste.length > 6 && !S.allePost ? '<button type="button" class="btn small ghost" data-act="post-alle">alle ' + liste.length + '</button>' : '') + '</div>' +

@@ -82,7 +82,7 @@
       if (r && r.unterlage) {
         D.belege = D.belege.filter(function (b) { return b.gruppe !== row.gruppe; });
         D.fragen = D.fragen.filter(function (f) { return f.datensatz !== row.id; });
-        D.einst.unterlagen = (D.einst.unterlagen || []).concat([r.unterlage]);
+        D.einst.unterlagen = (D.einst.unterlagen || []).filter(function (u) { return u.pfad !== r.unterlage.pfad; }).concat([r.unterlage]);
         if (r.steuer) D.einst.steuer = r.steuer;
         return Object.assign(row, { r: r, abgelegt: r.unterlage });
       }
@@ -114,7 +114,7 @@
     var j = f.datum ? +f.datum.slice(0, 4) : f.jahr;
     var eintrag = { id: APP.uuid(), jahr: j, pfad: f.datei, name: (stelle + ' – ' + titel + '.' + ext).replace(/[\\/:*?"<>|]+/g, '-'), am: L.heute(), von: (S.me || {}).name || null, art: 'behoerde', stelle: stelle, titel: titel, datum: f.datum || null, info: {} };
     /* Belege werden nie gelöscht: storniert und als Post markiert, die App blendet sie aus */
-    return APP.einstellung('unterlagen', (D.einst.unterlagen || []).concat([eintrag])).then(function () {
+    return APP.einstellung('unterlagen', (D.einst.unterlagen || []).filter(function (u) { return u.pfad !== f.datei; }).concat([eintrag])).then(function () {
       return APP.sb.from('fragen').update({ erledigt: true, antwort: 'Post vom Amt, bei den Unterlagen abgelegt.' }).in('datensatz', rows.map(function (b) { return b.id; })).eq('erledigt', false);
     }).then(function (res) {
       if (res && res.error) throw res.error;
