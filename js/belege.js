@@ -27,6 +27,7 @@
     if (!g.bestaetigt) return '<span class="chip yel">bitte prüfen</span>';
     if (g.status === 'privat') return '<span class="chip">privat</span>';
     if (g.status === 'unklar') return '<span class="chip warn">unklar</span>';
+    if (g.privat) return '<span class="chip">davon privat ' + L.fmt(g.privat) + '</span>';
     return '';
   }
   APP.belegStatusChip = statusChip;
@@ -45,7 +46,7 @@
     if (!gr.length) return '<div class="empty">' + (opt.leer || 'Keine Belege.') + '</div>';
     var sb = 0, sn = 0, su = 0;
     var rows = gr.map(function (g) {
-      if (!g.storniert && g.status !== 'privat') { sb += g.brutto; sn += g.netto; su += g.ust; }
+      if (!g.storniert && g.status !== 'privat') { sb += g.brutto - (g.privat || 0); sn += g.netto - (g.privatNetto || 0); su += g.ust - (g.privatUst || 0); }
       var cls = ['click']; if (!g.bestaetigt && !g.storniert) cls.push('neu'); if (g.status === 'privat') cls.push('privat'); if (g.storniert) cls.push('storno');
       var konto = g.rows.filter(L.aktiv).map(function (b) { return b.konto; }).filter(function (k, i, a) { return k && a.indexOf(k) === i; }).join(', ');
       var bk = v.gruppe[g.gruppe];
@@ -199,6 +200,10 @@
     keys.sort(function (a, b) { return (oft[b] || 0) - (oft[a] || 0) || a - b; });
     return '<datalist id="konten">' + keys.map(function (k) { return '<option value="' + k + '">' + h(window.KONTEN[k]) + '</option>'; }).join('') + '</datalist>';
   }
+  /* einzelne Zeile privat, z. B. ein Getränk auf der Tankrechnung */
+  function privatHaken(an) {
+    return '<label class="f zp" style="flex-direction:row;gap:8px;align-items:center;font-weight:500;margin:8px 0 4px"><input type="checkbox" name="zprivat"' + (an ? ' checked' : '') + '> <span>Privat (zählt nicht als Betriebsausgabe)</span></label>';
+  }
   function zeileHtml(b, i, mehr) {
     var art = b.steuerart || 'vst';
     return '<div class="card" style="background:#F8F9F6;padding:12px" data-zeile="' + i + '"' + (b.id ? ' data-id="' + b.id + '"' : '') + '>' +
@@ -210,7 +215,7 @@
       '<label class="f">Satz<select class="in" name="steuersatz">' + SAETZE.concat(b.steuersatz && SAETZE.indexOf(Number(b.steuersatz)) < 0 ? [Number(b.steuersatz)] : []).map(function (s) { return '<option value="' + s + '"' + (Number(b.steuersatz === null || b.steuersatz === undefined ? 20 : b.steuersatz) === s ? ' selected' : '') + '>' + s + ' %</option>'; }).join('') + '</select></label>' +
       '<label class="f">USt / Vorsteuer €<input class="in num" name="ust" inputmode="decimal" value="' + L.fmt(b.ust || 0) + '"></label>' +
       '<label class="f">Netto €<input class="in num" name="netto" inputmode="decimal" value="' + L.fmt(b.netto || 0) + '"></label>' +
-      '</div>' + (mehr ? '<div><button type="button" class="btn small ghost" data-act="zeile-weg">Zeile entfernen</button></div>' : '') + '</div>';
+      '</div>' + (mehr ? privatHaken(b.status === 'privat') + '<div><button type="button" class="btn small ghost" data-act="zeile-weg">Zeile entfernen</button></div>' : '') + '</div>';
   }
   function rechneZeile(z, quelle) {
     var get = function (n) { return z.querySelector('[name="' + n + '"]'); };
@@ -331,6 +336,7 @@
       wrap.className = 'f span2'; wrap.innerHTML = 'Bezeichnung<input class="in" name="text" value="' + h(t ? t.value : '') + '">';
       first.querySelector('.grid').prepend(wrap);
       if (t) t.closest('label').remove();
+      if (!first.querySelector('[name="zprivat"]')) first.querySelector('.grid').insertAdjacentHTML('afterend', privatHaken(false) + '<div><button type="button" class="btn small ghost" data-act="zeile-weg">Zeile entfernen</button></div>');
     }
     var div = document.createElement('div'); div.innerHTML = zeileHtml({ steuerart: 'vst', steuersatz: 10, konto: (box.querySelector('[name="konto"]') || {}).value || '' }, n, true);
     box.appendChild(div.firstChild);
@@ -350,12 +356,13 @@
     var zeilen = APP.$$('#zeilen [data-zeile]').map(function (z) {
       var q = function (n) { var x = z.querySelector('[name="' + n + '"]'); return x ? x.value : ''; };
       var brutto = L.parse(q('brutto')), ust = L.parse(q('ust')), netto = L.parse(q('netto'));
-      return { id: z.dataset.id || null, text: z.querySelector('[name="text"]') ? q('text') : v.text0, konto: q('konto') ? Number(q('konto')) : null, brutto: L.r2(brutto), ust: L.r2(isFinite(ust) ? ust : 0), netto: L.r2(isFinite(netto) ? netto : brutto), steuerart: q('steuerart'), steuersatz: q('steuerart') === 'vst' || q('steuerart') === 'rc' || q('steuerart') === 'ig' ? Number(q('steuersatz')) : null };
+      var zp = z.querySelector('[name="zprivat"]');
+      return { privat: !!(zp && zp.checked), id: z.dataset.id || null, text: z.querySelector('[name="text"]') ? q('text') : v.text0, konto: q('konto') ? Number(q('konto')) : null, brutto: L.r2(brutto), ust: L.r2(isFinite(ust) ? ust : 0), netto: L.r2(isFinite(netto) ? netto : brutto), steuerart: q('steuerart'), steuersatz: q('steuerart') === 'vst' || q('steuerart') === 'rc' || q('steuerart') === 'ig' ? Number(q('steuersatz')) : null };
     });
     var fehler = '';
     zeilen.forEach(function (z) {
       if (!isFinite(z.brutto)) fehler = 'Bitte bei jeder Zeile den Bruttobetrag eintragen.';
-      else if (st.status !== 'privat' && !z.konto) fehler = 'Bitte bei jeder Zeile das Konto eintragen.';
+      else if (st.status !== 'privat' && !z.privat && !z.konto) fehler = 'Bitte bei jeder Zeile das Konto eintragen.';
       else if (z.konto && !(window.KONTEN || {})[z.konto]) fehler = 'Konto ' + z.konto + ' gibt es im Kontenrahmen nicht.';
       else if (Math.abs(z.netto + z.ust - z.brutto) > 0.011) fehler = 'Netto und Steuer ergeben nicht den Bruttobetrag (' + L.fmt(z.brutto) + ').';
       if (z.steuerart !== 'vst') z.ust = 0, z.netto = z.brutto;
@@ -373,6 +380,7 @@
       var alt = st.g ? st.g.rows.filter(function (b) { return !b.storniert; }) : [];
       zeilen.forEach(function (z) {
         var row = Object.assign({}, gemeinsam, { text: z.text || '', konto: z.konto, brutto: z.brutto, netto: z.netto, ust: z.ust, steuerart: z.steuerart, steuersatz: z.steuersatz });
+        if (z.privat) row.status = 'privat';
         var alteZeile = z.id && st.g ? st.g.rows.find(function (b) { return b.id === z.id; }) : null;
         if (alteZeile && alteZeile._lesung) row.lesung = alteZeile._lesung;
         if (z.id) jobs.push(APP.upd('belege', { id: z.id }, row));

@@ -90,6 +90,15 @@
       });
       g.brutto = L.r2(g.brutto); g.netto = L.r2(g.netto); g.ust = L.r2(g.ust);
       g.storniert = g.rows.every(function (b) { return b.storniert; });
+      /* einzelne Zeilen können privat sein (z. B. Getränk auf der Tankrechnung): ganz privat nur, wenn alle Zeilen privat sind */
+      var aktiv = g.rows.filter(function (b) { return !b.storniert; }), priv = aktiv.filter(function (b) { return b.status === 'privat'; });
+      g.privat = L.r2(priv.reduce(function (n, b) { return n + L.n(b.brutto); }, 0));
+      g.privatNetto = L.r2(priv.reduce(function (n, b) { return n + L.n(b.netto); }, 0));
+      g.privatUst = L.r2(priv.reduce(function (n, b) { return n + L.n(b.ust); }, 0));
+      if (aktiv.length) {
+        var gesch = aktiv.filter(function (b) { return b.status !== 'privat'; });
+        g.status = !gesch.length ? 'privat' : gesch.some(function (b) { return b.status === 'unklar'; }) ? 'unklar' : gesch[0].status;
+      }
     });
     return out;
   };
@@ -284,7 +293,8 @@
     var v = L.verknuepft(D), amt = Math.abs(L.n(bk.betrag)), out = [];
     if (bk.betrag < 0) {
       /* auch Barbelege ohne Nummer: ein Foto ist zuerst „bar“, war aber oft eine Kartenzahlung */
-      L.gruppen(D.belege, function (b) { return !b.storniert && (b.zahlung === 'bank' || (b.zahlung === 'bar' && !b.nr)) && b.status !== 'privat'; }).forEach(function (g) {
+      L.gruppen(D.belege, function (b) { return !b.storniert && (b.zahlung === 'bank' || (b.zahlung === 'bar' && !b.nr)); }).forEach(function (g) {
+        if (g.status === 'privat') return;
         if (v.gruppe[g.gruppe] && v.gruppe[g.gruppe].id !== bk.id) return;
         var dm = (g.jahr * 12 + g.monat) - (bk.jahr * 12 + bk.monat);
         var tage = g.datum ? Math.abs(L.tageBis(g.datum, bk.datum)) : 0;
@@ -370,8 +380,8 @@
     /* zweiter Durchgang: mehrere Abbuchungen zu einem Beleg (z. B. Uber-Fahrten einer Reise) */
     var erledigt = {}; out.forEach(function (x) { erledigt[x.bank.id] = 1; });
     var v = L.verknuepft(D);
-    L.gruppen(D.belege, function (b) { return !b.storniert && b.zahlung === 'bank' && b.status !== 'privat'; }).forEach(function (g) {
-      if (v.gruppe[g.gruppe] || belegt[g.gruppe] || g.brutto <= 0) return;
+    L.gruppen(D.belege, function (b) { return !b.storniert && b.zahlung === 'bank'; }).forEach(function (g) {
+      if (g.status === 'privat' || v.gruppe[g.gruppe] || belegt[g.gruppe] || g.brutto <= 0) return;
       var teile = D.bank.filter(function (bk) {
         if (bk.art !== 'offen' || erledigt[bk.id] || bk.betrag >= 0 || (jahr && bk.jahr !== jahr) || (monat && bk.monat !== monat)) return false;
         if (Math.abs((g.jahr * 12 + g.monat) - (bk.jahr * 12 + bk.monat)) > 1) return false;
@@ -454,13 +464,21 @@
     var last = rows.length;
     rows.push([null, null, null, null, null, { f: '=SUM(F2:F' + last + ')', s: 'buchFett' }, { f: '=SUM(G2:G' + last + ')', s: 'buchFett' }, { f: '=SUM(H2:H' + last + ')', s: 'buchFett' }]);
     rows.push([]);
-    D.bank.filter(function (b) { return b.jahr === j && b.monat === m && ['ausgang', 'entnahme', 'einlage', 'privat', 'differenz', 'offen', 'cashback'].indexOf(b.art) >= 0; })
-      .sort(function (a, b) { return a.datum.localeCompare(b.datum); })
-      .forEach(function (b) {
+    var unten = D.bank.filter(function (b) { return b.jahr === j && b.monat === m && ['ausgang', 'entnahme', 'einlage', 'privat', 'differenz', 'offen', 'cashback'].indexOf(b.art) >= 0; })
+      .map(function (b) {
         var t = b.notiz || (b.art === 'cashback' ? 'N26 Cashback' : b.art === 'offen' ? 'offen: ' + b.name : b.name);
         if (b.art === 'differenz' && !b.notiz) t = 'Differenz ' + b.name;
-        rows.push([{ v: b.datum, t: 'd', s: 'datum' }, { v: Math.abs(L.n(b.betrag)), s: 'buch' }, t, auszug]);
+        return { datum: b.datum, betrag: Math.abs(L.n(b.betrag)), t: t };
       });
+    /* privater Anteil eines vom Konto bezahlten Belegs: steht wie eine Entnahme bei den Kontobewegungen */
+    L.gruppen(D.belege, function (b) { return b.jahr === j && b.monat === m && !b.storniert; }).forEach(function (g) {
+      if (!g.privat || g.status === 'privat' || g.zahlung !== 'bank') return;
+      var was = g.rows.filter(function (b) { return !b.storniert && b.status === 'privat'; }).map(function (b) { return b.text; }).filter(Boolean).join(', ');
+      unten.push({ datum: g.datum || (j + '-' + L.p2(m) + '-01'), betrag: g.privat, t: 'Privatanteil ' + (g.lieferant || '') + (L.belegNr(g) ? ' (Beleg ' + L.belegNr(g) + ')' : '') + (was ? ': ' + was : '') });
+    });
+    unten.sort(function (a, b) { return String(a.datum).localeCompare(String(b.datum)); }).forEach(function (x) {
+      rows.push([{ v: x.datum, t: 'd', s: 'datum' }, { v: x.betrag, s: 'buch' }, x.t, auszug]);
+    });
     rows.push([]);
     var ueb = rows.length + 1;
     rows.push([null, null, null, 'Übersicht:', 'Kontonummer', null, 'Netto-Betrag']);
