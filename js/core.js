@@ -263,6 +263,7 @@
   }
   APP.render = function () {
     var app = document.getElementById('app');
+    if (S.gesperrt) { app.innerHTML = APP.V.sperre.render(); return; }
     if (!S.me) { app.innerHTML = APP.V.login.render(); if (APP.V.login.after) APP.V.login.after(); return; }
     APP.parseHash();
     var v = APP.V[S.view], html;
@@ -283,7 +284,7 @@
     var a = e.target.closest('[data-act]');
     if (a && !a.disabled) {
       var f = APP.A[a.dataset.act];
-      if (f) { e.preventDefault(); f(a, e); }
+      if (f) { if (a.tagName !== 'INPUT') e.preventDefault(); f(a, e); }
     }
   });
   APP.schliessenWennOffen = function (el) { if (dlg().open && dlg().contains(el)) APP.schliessen(); };

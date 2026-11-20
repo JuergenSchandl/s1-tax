@@ -6,10 +6,22 @@
   function fehlerSeite(text) {
     document.getElementById('app').innerHTML = '<div class="login"><div class="card"><h2>S1 Tax startet nicht</h2><p>' + APP.h(text) + '</p><button class="btn pri" onclick="location.reload()">Nochmal versuchen</button></div></div>';
   }
-  APP.nachAnmeldung = function () {
+  /* App-Sperre: beim Öffnen und nach 5 Minuten im Hintergrund mit Face ID / Fingerabdruck entsperren */
+  function lies(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  APP.sperreAn = function () {
+    var s = lies('s1tax:sperre');
+    return APP.passkeyMoeglich() && (s === '1' || (s === null && lies('s1tax:passkey') === '1'));
+  };
+  APP.entsperrt = function (ja) {
+    try { if (ja === true) sessionStorage.setItem('s1tax:offen', '1'); else if (ja === false) sessionStorage.removeItem('s1tax:offen'); return sessionStorage.getItem('s1tax:offen') === '1'; } catch (e) { return ja === true; }
+  };
+  APP.nachAnmeldung = function (frisch) {
+    if (frisch) APP.entsperrt(true);
     return APP.sb.auth.getSession().then(function (r) {
       var sess = r && r.data && r.data.session;
-      if (!sess) { S.me = null; APP.render(); return; }
+      if (!sess) { S.me = null; S.gesperrt = false; APP.render(); return; }
+      if (APP.sperreAn() && !APP.entsperrt()) { S.gesperrt = true; APP.render(); return; }
+      S.gesperrt = false;
       var user = sess.user;
       return APP.sb.from('members').select('*').eq('user_id', user.id).maybeSingle().then(function (m) {
         if (m.error) throw m.error;
@@ -41,6 +53,13 @@
     APP.nachAnmeldung().catch(function (e) { APP.fehler(e); APP.render(); });
   }
   document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') { try { sessionStorage.setItem('s1tax:weg', String(Date.now())); } catch (e) { /* egal */ } return; }
+    var weg = 0; try { weg = Number(sessionStorage.getItem('s1tax:weg') || 0); } catch (e) { weg = 0; }
+    if (S.me && APP.sperreAn() && weg && Date.now() - weg > 5 * 60000) {
+      APP.entsperrt(false); S.gesperrt = true;
+      try { document.getElementById('dlg').close(); } catch (e) { /* egal */ }
+      APP.render(); return;
+    }
     if (document.visibilityState !== 'visible' || !S.me || !navigator.onLine || S.laedt) return;
     if (Date.now() - (S.stand || 0) < 60000) return;
     var offen = document.getElementById('dlg').open, tippt = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);

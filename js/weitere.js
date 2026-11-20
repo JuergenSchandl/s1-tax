@@ -229,6 +229,7 @@
         '</div><div class="narrow" style="display:flex;flex-direction:column;gap:20px">' +
         '<div class="card"><div class="head"><h2>Anmeldung</h2></div><p style="margin:0">Angemeldet als <b>' + h((S.me || {}).name) + '</b> (' + h((S.me || {}).email || '') + ')' + ((S.me || {}).rolle === 'kontrolle' ? ', Kontrolle' : '') + '.</p><div id="passkeys">' + (APP.passkeyMoeglich() ? '<button type="button" class="btn small" data-act="passkeys-laden">Passkeys anzeigen</button>' : '<span class="s">Passkeys gehen in diesem Browser nicht.</span>') + '</div>' +
         (APP.passkeyMoeglich() ? '<div><button type="button" class="btn pri" data-act="passkey-neu">Fingerabdruck / Face ID einrichten</button></div><p class="s" style="margin:0">Gilt für dieses Gerät. Jedes Handy und jeder PC wird einmal eingerichtet.</p>' : '') +
+        (APP.passkeyMoeglich() ? '<label class="f" style="flex-direction:row;gap:10px;align-items:flex-start;font-weight:500"><input type="checkbox" data-act="sperre-umschalten"' + (APP.sperreAn() ? ' checked' : '') + ' style="margin-top:3px"> <span>App-Sperre auf diesem Gerät: beim Öffnen und nach 5 Minuten im Hintergrund mit Fingerabdruck / Face ID entsperren<span class="hint" style="display:block">Dafür muss dieses Gerät oben eingerichtet sein.</span></span></label>' : '') +
         '<div class="chips"><button type="button" class="btn small" data-act="passwort">Passwort ändern</button><button type="button" class="btn small" data-act="abmelden">Abmelden</button></div></div>' +
         APP.pushBereich() +
         '<div class="card"><h2>Über die App</h2><p class="s" style="margin:0">S1 Tax · Version ' + APP.VERSION + '<br>Daten in Supabase (EU, Frankfurt), nur für Jürgen und Dagmar zugänglich.<br>Daten geladen: ' + (S.stand ? new Date(S.stand).toLocaleString('de-AT') : '–') + '</p><div class="chips"><button type="button" class="btn small" data-act="neu-laden">Daten neu laden</button><button type="button" class="btn small" data-act="daten-export">Alle Daten herunterladen</button></div></div>' +
@@ -287,8 +288,10 @@
     APP.lauf(el, function () {
       return APP.sb.auth.registerPasskey().then(function (r) {
         if (r.error) throw r.error;
-        try { localStorage.setItem('s1tax:passkey', '1'); } catch (e) { /* egal */ }
-        APP.toast('Eingerichtet. Ab jetzt kannst du dich auf diesem Gerät mit Fingerabdruck oder Gesicht anmelden.');
+        try { localStorage.setItem('s1tax:passkey', '1'); localStorage.setItem('s1tax:sperre', '1'); } catch (e) { /* egal */ }
+        APP.entsperrt(true);
+        APP.toast('Eingerichtet. Ab jetzt öffnet sich S1 Tax auf diesem Gerät nur mit Fingerabdruck oder Gesicht.');
+        APP.render();
       });
     }).catch(function (e) { APP.toast(APP.passkeyFehler(e), { bad: true }); });
   };
@@ -303,6 +306,34 @@
       if (a !== b) { APP.toast('Die beiden Eingaben sind verschieden.', { bad: true }); return; }
       APP.sb.auth.updateUser({ password: a }).then(function (r) { if (r.error) throw r.error; APP.schliessen(); APP.toast('Passwort geändert.'); }).catch(APP.fehler);
     };
+  };
+
+  /* ---------- Sperrbildschirm ---------- */
+  APP.V.sperre = {
+    render: function () {
+      return '<div class="login"><div class="card" style="text-align:center;align-items:center"><div class="brand"><div class="logo">S1</div><div style="text-align:left"><b>S1 Tax</b><span class="s">gesperrt</span></div></div>' +
+        (S.loginFehler ? '<div class="note bad" style="align-self:stretch">' + h(S.loginFehler) + '</div>' : '') +
+        (!navigator.onLine ? '<div class="note warn" style="align-self:stretch">Kein Netz. Zum Entsperren braucht die App Internet.</div>' : '') +
+        '<button type="button" class="btn pri" data-act="entsperren" style="min-height:52px;align-self:stretch">Mit Fingerabdruck / Face ID entsperren</button>' +
+        '<button type="button" class="btn ghost" data-act="mit-passwort">Mit Passwort anmelden</button></div></div>';
+    }
+  };
+  APP.A.entsperren = function (el) {
+    S.loginFehler = '';
+    APP.lauf(el, function () {
+      return APP.sb.auth.signInWithPasskey().then(function (r) {
+        if (r.error) { S.loginFehler = APP.passkeyFehler(r.error); APP.render(); return; }
+        S.gesperrt = false;
+        return APP.nachAnmeldung(true);
+      });
+    }).catch(function (e) { S.loginFehler = APP.passkeyFehler(e); APP.render(); });
+  };
+  APP.A['mit-passwort'] = function () {
+    APP.sb.auth.signOut({ scope: 'local' }).then(function () { S.gesperrt = false; S.me = null; S.loginFehler = ''; APP.render(); });
+  };
+  APP.A['sperre-umschalten'] = function (el) {
+    try { localStorage.setItem('s1tax:sperre', el.checked ? '1' : '0'); } catch (e) { /* egal */ }
+    APP.toast(el.checked ? 'App-Sperre ist eingeschaltet.' : 'App-Sperre ist ausgeschaltet.');
   };
 
   /* ---------- Anmeldung ---------- */
@@ -321,7 +352,7 @@
     APP.lauf(b, function () {
       return APP.sb.auth.signInWithPassword({ email: f.email.value.trim(), password: f.pw.value }).then(function (r) {
         if (r.error) { S.loginFehler = /invalid/i.test(r.error.message) ? 'E-Mail oder Passwort stimmt nicht.' : r.error.message; APP.render(); return; }
-        return APP.nachAnmeldung();
+        return APP.nachAnmeldung(true);
       });
     });
   };
@@ -330,7 +361,7 @@
     APP.lauf(el, function () {
       return APP.sb.auth.signInWithPasskey().then(function (r) {
         if (r.error) { S.loginFehler = APP.passkeyFehler(r.error); APP.render(); return; }
-        return APP.nachAnmeldung();
+        return APP.nachAnmeldung(true);
       });
     }).catch(function (e) { S.loginFehler = APP.passkeyFehler(e); APP.render(); });
   };
