@@ -248,6 +248,7 @@
     if (!l || !l.ki) return autoNote + bisher;
     var k = l.ki, t = [];
     if (k.begruendung) t.push(h(k.begruendung));
+    if (k.regel) t.push('<b>Regel:</b> ' + h(k.regel));
     var fremd = k.an_s1 === false && !g.storniert && !l.an_s1_ok && g.bestaetigt === false;
     if (k.frage && !fremd) t.push('<b>Frage der App:</b> ' + h(k.frage));
     var fremdNote = fremd ? '<div class="note warn"><b>Diese Rechnung geht an ' + h(k.empfaenger || 'jemand anderen') + ', nicht an S1 Secure oder Jürgen Schandl.</b> Sie zählt deshalb vorerst nirgends mit.' +

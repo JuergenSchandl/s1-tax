@@ -295,6 +295,7 @@
         (APP.passkeyMoeglich() ? '<label class="f" style="flex-direction:row;gap:10px;align-items:flex-start;font-weight:500"><input type="checkbox" data-act="sperre-umschalten"' + (APP.sperreAn() ? ' checked' : '') + ' style="margin-top:3px"> <span>App-Sperre auf diesem Gerät: beim Öffnen und nach 5 Minuten im Hintergrund mit Fingerabdruck / Face ID entsperren<span class="hint" style="display:block">Dafür muss dieses Gerät oben eingerichtet sein.</span></span></label>' : '') +
         '<div class="chips"><button type="button" class="btn small" data-act="passwort">Passwort ändern</button><button type="button" class="btn small" data-act="abmelden">Abmelden</button></div></div>' +
         APP.pushBereich() +
+        regelnKarte() +
         '<div class="card"><div class="head"><h2>Fotos von Belegen</h2></div><label class="f" style="flex-direction:row;gap:10px;align-items:flex-start;font-weight:500"><input type="checkbox" data-act="zuschnitt-umschalten"' + (APP.zuschnittAn && APP.zuschnittAn() ? ' checked' : '') + ' style="margin-top:3px"> <span>Fotos automatisch zuschneiden und gerade richten<span class="hint" style="display:block">Gilt für dieses Gerät. Erkennt die App den Beleg nicht sicher, bleibt das Foto, wie es ist. Nach dem Foto kannst du auch das ganze Foto nehmen.</span></span></label></div>' +
         '<div class="card"><h2>Über die App</h2><p class="s" style="margin:0">S1 Tax · Version ' + APP.VERSION + '<br>Daten in Supabase (EU, Frankfurt), nur für Jürgen und Dagmar zugänglich.<br>Daten geladen: ' + (S.stand ? new Date(S.stand).toLocaleString('de-AT') : '–') + '</p><div class="chips"><button type="button" class="btn small" data-act="neu-laden">Daten neu laden</button><button type="button" class="btn small" data-act="daten-export">Alle Daten herunterladen</button></div></div>' +
         '</div></div>';
@@ -319,6 +320,37 @@
   APP.A['ordner-waehlen'] = function () { APP.ordnerWaehlen().then(function () { APP.toast('Ordner gewählt. Die erste Sicherung läuft …'); return APP.sichern(false); }).catch(function (e) { if (e && e.name !== 'AbortError') APP.fehler(e, 'Ordner'); }); };
   APP.A.sichern = function () { APP.sichern(false); };
   APP.A['daten-export'] = function () { APP.speichernUnter(APP.datenExport(), 'S1-Tax-Daten-' + L.heute() + '.json'); };
+  /* Regeln je Lieferant: z. B. bei Spusu ist nur die Leitung von Jürgen geschäftlich */
+  function regelnKarte() {
+    var r = D.einst.regeln || [];
+    return '<div class="card"><div class="head"><h2>Regeln für Lieferanten</h2><button type="button" class="btn small" data-act="regel-neu">Regel hinzufügen</button></div>' +
+      '<p class="s" style="margin:0 0 8px">Gelten beim Lesen jeder Rechnung dieses Lieferanten, auch für alle künftigen.</p>' +
+      (r.length ? '<div class="list">' + r.map(function (x) {
+        return '<div class="item"><div class="grow"><span class="t">' + h(x.lieferant) + (x.nur ? ': nur ' + h(x.nur) + ' geschäftlich' : '') + '</span><span class="s">' + h(x.text || '') + '</span></div><button type="button" class="btn small ghost" data-act="regel-weg" data-id="' + h(x.id) + '">Entfernen</button></div>';
+      }).join('') + '</div>' : '<div class="empty">Noch keine Regeln.</div>') + '</div>';
+  }
+  APP.A['regel-neu'] = function () {
+    APP.modal({
+      title: 'Regel für einen Lieferanten',
+      body: '<div class="grid g2" id="rg"><label class="f">Lieferant<input class="in" name="lieferant" placeholder="z. B. Spusu" autofocus></label>' +
+        '<label class="f">Nur dieser Name ist geschäftlich<input class="in" name="nur" placeholder="z. B. Jürgen (leer lassen, wenn nicht nötig)"></label></div>' +
+        '<label class="f">Was soll die App beachten?<input class="in" name="text" placeholder="z. B. Andere Leitungen (Dagmar) sind privat."></label>',
+      foot: '<button type="button" class="btn" data-act="schliessen">Abbrechen</button><button type="button" class="btn pri" id="rg-ok">Speichern</button>'
+    });
+    var ok = document.getElementById('rg-ok');
+    ok.onclick = function () {
+      var v = APP.formDaten(document.getElementById('dlg'));
+      if (!v.lieferant || !(v.nur || v.text)) { APP.toast('Bitte Lieferant und eine Regel angeben.', { bad: true }); return; }
+      var neu = { id: APP.uuid(), lieferant: v.lieferant.trim(), nur: (v.nur || '').trim() || null, text: (v.text || '').trim() || null, am: L.heute(), von: APP.ich() };
+      APP.lauf(ok, function () { return APP.einstellung('regeln', (D.einst.regeln || []).concat([neu])).then(function () { APP.schliessen(); APP.toast('Regel gespeichert.'); APP.render(); }); });
+    };
+  };
+  APP.A['regel-weg'] = function (el) {
+    APP.bestaetigen('Diese Regel entfernen?', 'Entfernen').then(function (ok) {
+      if (!ok) return;
+      return APP.einstellung('regeln', (D.einst.regeln || []).filter(function (x) { return x.id !== el.dataset.id; })).then(function () { APP.toast('Regel entfernt.'); APP.render(); });
+    }).catch(APP.fehler);
+  };
   APP.A['neu-laden'] = function (el) { APP.lauf(el, function () { return APP.laden().then(function () { APP.toast('Neu geladen.'); APP.render(); }); }); };
   APP.A['protokoll-laden'] = function (el) {
     APP.lauf(el, function () {

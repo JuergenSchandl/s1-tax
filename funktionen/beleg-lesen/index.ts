@@ -36,7 +36,17 @@ const KONTEN_HAEUFIG: Record<number, string> = {
   7790: "Spesen des Geldverkehrs", 3470: "Umsatzsteuer-Zahlung ans Finanzamt", 3600: "SVS-Beiträge", 9410: "Einkommensteuer (privat)",
 };
 
-function prompt(verlauf: string, bank: { datum?: string; betrag?: number; name?: string } | null) {
+// deno-lint-ignore no-explicit-any
+function regelText(regeln: any[]) {
+  if (!regeln.length) return "";
+  return `
+BESONDERE REGELN je Lieferant (gehen allen anderen Regeln und den bisherigen Zuordnungen vor):
+${regeln.map((x) => `- ${x.lieferant}: ${x.nur ? `nur die Positionen von ${x.nur} sind geschäftlich; jede Position (Leitung, Person, Vertrag) als eigene Zeile, mit dem Namen im "text"; alle anderen Positionen mit "privat": true. ` : ""}${x.text || ""}`).join("\n")}
+`;
+}
+
+// deno-lint-ignore no-explicit-any
+function prompt(verlauf: string, bank: { datum?: string; betrag?: number; name?: string } | null, regeln: any[] = []) {
   return `Du liest einen Beleg (Rechnung, Kassabon oder Quittung) oder ein Schreiben einer Behörde für das österreichische Einzelunternehmen
 S1 Secure e.U. (Inhaber Jürgen Schandl, Doppelngasse 113, 3400 Klosterneuburg, UID ATU68636158).
 Die Firma versteuert nach vereinnahmten Entgelten und ist vorsteuerabzugsberechtigt.
@@ -56,7 +66,7 @@ Antworte NUR mit einem JSON-Objekt, ohne Erklärung davor oder danach, in genau 
   "behoerde": null,
   "empfaenger": "an wen die Rechnung adressiert ist (Firma oder Name, wie auf dem Beleg), null bei Kassabon ohne Empfänger",
   "an_s1": "true, wenn die Rechnung an S1 Secure oder Jürgen Schandl geht; false, wenn an jemand anderen; null bei Kassabon ohne Empfänger",
-  "zeilen": [ { "konto": 7385, "text": "Bezeichnung", "brutto": 0.00, "netto": 0.00, "ust": 0.00, "steuersatz": 20, "steuerart": "vst" } ],
+  "zeilen": [ { "konto": 7385, "text": "Bezeichnung", "brutto": 0.00, "netto": 0.00, "ust": 0.00, "steuersatz": 20, "steuerart": "vst", "privat": false } ],
   "anlage": false,
   "garantie_monate": null,
   "frage": null,
@@ -66,6 +76,7 @@ Antworte NUR mit einem JSON-Objekt, ohne Erklärung davor oder danach, in genau 
 
 Regeln für "zeilen":
 - Eine Zeile pro Steuersatz (z. B. Restaurant 10 % Speisen und 20 % Getränke = zwei Zeilen). Beträge in EUR mit 2 Nachkommastellen, netto + ust = brutto.
+- privat: true nur für Positionen, die laut einer besonderen Regel privat sind; sonst false.
 - Ist der Beleg nicht in EUR, rechne mit dem bezahlten EUR-Betrag${bank ? " vom Konto" : ""}.
 - steuerart:
   "vst" = österreichische Umsatzsteuer ist ausgewiesen (österreichischer Lieferant oder österreichische UID) → Vorsteuer.
@@ -104,7 +115,8 @@ ${Object.entries(KONTEN_HAEUFIG).map(([k, v]) => `  ${k} ${v}`).join("\n")}
 Bisherige Zuordnungen dieses Unternehmens (Lieferant → Konto, Steuerart, wie oft):
 Ist der Lieferant hier aufgeführt, buche ALLE Zeilen so wie bisher (gleiches Konto, gleiche Steuerart), auch Grund-, Abo- oder Servicegebühren
 desselben Lieferanten (z. B. bei Easypark alles 7251 ohne Vorsteuer). Weiche nur ab, wenn der Beleg eindeutig etwas anderes ist, und schreib dann in "begruendung", warum.
-${verlauf || "(noch keine)"}`;
+${verlauf || "(noch keine)"}
+${regelText(regeln)}`;
 }
 
 function zahl(v: unknown) { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; }
@@ -210,11 +222,15 @@ Deno.serve(async (req) => {
   }
   const verlauf = [...proL.values()].map((e) => `${e.name} → ${[...e.paare.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([p, n]) => `${p} (${n}×)`).join("; ")} – zuletzt: ${e.text}`);
 
+  const { data: rg } = await sb.from("einstellungen").select("value").eq("key", "regeln").maybeSingle();
+  // deno-lint-ignore no-explicit-any
+  const regeln: any[] = Array.isArray(rg && rg.value) ? rg.value.filter((x: any) => x && x.lieferant) : [];
+
   const content = [
     media === "application/pdf"
       ? { type: "document", source: { type: "base64", media_type: media, data: encodeBase64(bytes) } }
       : { type: "image", source: { type: "base64", media_type: media, data: encodeBase64(bytes) } },
-    { type: "text", text: prompt(verlauf.join("\n"), body.bank || null) },
+    { type: "text", text: prompt(verlauf.join("\n"), body.bank || null, regeln) },
   ];
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -251,9 +267,20 @@ Deno.serve(async (req) => {
     if (konto && L.kfz(konto) && art === "vst") art = "keine";
     if (art !== "vst") ust = 0;
     const satz = art === "vst" || art === "rc" || art === "ig" || art === "ausland" ? (Number(z.steuersatz) || (art === "vst" ? 20 : art === "ausland" ? null : 20)) : null;
-    return { konto, text: String(z.text || r.text || "").slice(0, 200), brutto, ust, netto: zahl(brutto - ust), steuerart: art, steuersatz: satz };
+    return { konto, text: String(z.text || r.text || "").slice(0, 200), brutto, ust, netto: zahl(brutto - ust), steuerart: art, steuersatz: satz, privat: z.privat === true };
   }).filter((z: { brutto: number }) => z.brutto !== 0);
-  if (!zeilen.length) zeilen = [{ konto: null, text: String(r.text || ""), brutto: 0, ust: 0, netto: 0, steuerart: "vst", steuersatz: 20 }];
+  if (!zeilen.length) zeilen = [{ konto: null, text: String(r.text || ""), brutto: 0, ust: 0, netto: 0, steuerart: "vst", steuersatz: 20, privat: false }];
+
+  // besondere Regel für diesen Lieferanten sicherstellen: nur die Zeilen mit dem Namen sind geschäftlich
+  const regel = regeln.find((x) => L.aehnlich(x.lieferant, r.lieferant || ""));
+  let regelFrage: string | null = null;
+  if (regel && regel.nur) {
+    const nz = (t: string) => String(t || "").toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss");
+    const nur = nz(regel.nur);
+    const mit = zeilen.filter((z: { text: string }) => nz(z.text).includes(nur));
+    if (mit.length) zeilen.forEach((z: { text: string; privat: boolean }) => { z.privat = !nz(z.text).includes(nur); });
+    else regelFrage = `Regel für ${regel.lieferant}: nur ${regel.nur} ist geschäftlich, aber die App hat die Position von ${regel.nur} nicht gefunden. Bitte aufteilen.`;
+  }
 
   // doppelt? gleiche Rechnungsnummer (beim Beleg oder im Kontoauszug) oder gleicher Lieferant mit gleichem Betrag kurz danach
   const brutto = zahl(zeilen.reduce((n: number, z: { brutto: number }) => n + z.brutto, 0));
@@ -281,7 +308,7 @@ Deno.serve(async (req) => {
   const doppelt = treffer ? `${treffer.lieferant} vom ${L.datum(treffer.datum)} über ${L.eur(treffer.brutto)} (${treffer.nr ? "Beleg " + treffer.nr + "/" + String(treffer.jahr).slice(2) : L.MONATE[treffer.monat] + ", noch ohne Nummer"})` : null;
   const doppeltGruppe = treffer ? treffer.gruppe : null;
 
-  let frage = r.frage ? String(r.frage) : null;
+  let frage = r.frage ? String(r.frage) : regelFrage;
   const fremd = r.an_s1 === false ? String(r.empfaenger || "jemand anderen").slice(0, 120) : null;
   if (fremd) frage = `Die Rechnung geht an ${fremd}, nicht an S1 Secure. Falsch hineingezogen?`;
   const garantie = r.garantie_monate && r.datum ? (() => { const [y, mo, d] = String(r.datum).split("-").map(Number); const g = new Date(Date.UTC(y, mo - 1 + Number(r.garantie_monate), d)); return g.toISOString().slice(0, 10); })() : null;
@@ -302,16 +329,18 @@ Deno.serve(async (req) => {
     garantie_bis: garantie,
     bestaetigt: false,
     status: frage ? "unklar" : row.status,
-    lesung: { ...(row.lesung || {}), ki: { ...r, zeilen: undefined, volltext: undefined, frage, doppelt, doppelt_gruppe: doppeltGruppe }, modell, zeit: new Date().toISOString() },
+    lesung: { ...(row.lesung || {}), ki: { ...r, zeilen: undefined, volltext: undefined, frage, doppelt, doppelt_gruppe: doppeltGruppe, regel: regel ? `${regel.lieferant}: ${regel.nur ? "nur " + regel.nur + " geschäftlich, der Rest privat" : ""}${regel.nur && regel.text ? ". " : ""}${regel.text || ""}` : null }, modell, zeit: new Date().toISOString() },
   };
-  const erste = zeilen[0];
+  // privat ist keine Spalte: als Status der Zeile speichern
+  const ohne = (z: Record<string, unknown>) => { const { privat, ...rest } = z; return { ...rest, status: privat ? "privat" : gemeinsam.status }; };
+  const erste = ohne(zeilen[0]);
   // neu gelesen: frühere Zusatzzeilen derselben Rechnung ersetzen
   await sb.from("belege").update({ storniert: true, notiz: "beim Neu-Lesen ersetzt" }).eq("gruppe", row.gruppe).neq("id", row.id).eq("storniert", false);
   const { error: e3 } = await sb.from("belege").update({ ...gemeinsam, ...erste }).eq("id", row.id);
   if (e3) return json({ error: e3.message }, 500);
   if (zeilen.length > 1) {
     const extra = zeilen.slice(1).map((z: Record<string, unknown>) => ({
-      ...gemeinsam, ...z, jahr: row.jahr, monat: row.monat, gruppe: row.gruppe, zahlung, datei: row.datei, quelle: row.quelle,
+      ...gemeinsam, ...ohne(z), jahr: row.jahr, monat: row.monat, gruppe: row.gruppe, zahlung, datei: row.datei, quelle: row.quelle,
     }));
     const { error: e4 } = await sb.from("belege").insert(extra);
     if (e4) return json({ error: e4.message }, 500);
