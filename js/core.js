@@ -6,7 +6,7 @@
   var CFG = window.S1_CONFIG || {};
   var L = window.L;
   var APP = window.APP = {
-    VERSION: '2026.11.20h',
+    VERSION: '2026.11.20i',
     CFG: CFG,
     sb: null,
     D: { belege: [], bank: [], ausgang: [], kunden: [], monate: [], einst: {}, fragen: [], hinweise: {}, members: [] },
@@ -39,6 +39,7 @@
     pfeil: '<path d="M9 6l6 6-6 6"/>',
     zurueck: '<path d="M15 6l-6 6 6 6"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
+    neu: '<path d="M20 12a8 8 0 1 1-2.35-5.65"/><path d="M20 4v5h-5"/>',
     excel: '<path d="M4 4h16v16H4z"/><path d="M8 8l8 8M16 8l-8 8"/>',
     frage: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .8-1 1.5V14"/><path d="M12 17.5v.01"/>',
     link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'
@@ -221,6 +222,15 @@
     ['fragen', 'Rückfragen'], ['einstellungen', 'Einstellungen']
   ];
   var ALIAS = { rechnung: 'ausgang', kunden: 'ausgang', suche: 'suche', protokoll: 'einstellungen' };
+  /* App neu laden: holt die neueste Version und frische Daten, ohne die App zu schließen */
+  APP.A.aktualisieren = function (el) {
+    if (el) el.classList.add('dreht');
+    var reg = navigator.serviceWorker && navigator.serviceWorker.getRegistration ? navigator.serviceWorker.getRegistration().catch(function () { return null; }) : Promise.resolve(null);
+    reg.then(function (r) { return r && r.update ? r.update().catch(function () { /* egal */ }) : null; }).then(function () {
+      try { sessionStorage.setItem('s1tax:aktualisiert', '1'); } catch (e) { /* egal */ }
+      location.reload();
+    });
+  };
   APP.go = function (hash) { if (('#' + hash) === location.hash) APP.render(); else location.hash = hash; };
   APP.parseHash = function () {
     var hsh = decodeURIComponent(location.hash.replace(/^#\/?/, '')) || 'uebersicht';
@@ -250,12 +260,12 @@
     var off = !S.online ? '<div class="offline">Kein Netz. Du siehst den letzten Stand; Fotos von Belegen werden gespeichert und später hochgeladen.' + (APP.warteschlangeAnzahl ? ' Wartend: ' + APP.warteschlangeAnzahl : '') + '</div>' : (APP.warteschlangeAnzahl ? '<div class="offline">' + APP.warteschlangeAnzahl + ' Beleg(e) warten aufs Hochladen …</div>' : '');
     var tab = function (v, label, ic, extra) { return '<button type="button" data-go="' + v + '"' + (cur === v ? ' aria-current="page"' : '') + '>' + APP.icon(ic, 22) + '<span>' + label + '</span>' + (extra || '') + '</button>'; };
     return '<div class="shell">' +
-      '<aside class="side"><div class="brand"><div class="logo">S1</div><div><b>S1 Tax</b><span class="s">' + APP.h((D.einst.firma || {}).name || 'S1 Secure e.U.') + '</span></div></div>' +
+      '<aside class="side"><button type="button" class="brand" data-go="uebersicht" aria-label="Zur Übersicht"><div class="logo">S1</div><div><b>S1 Tax</b><span class="s">' + APP.h((D.einst.firma || {}).name || 'S1 Secure e.U.') + '</span></div></button>' +
       '<form role="search" data-form="suche"><label class="f" for="q">Suchen<input class="in" id="q" name="q" type="search" placeholder="Lieferant, Betrag, Nummer" value="' + APP.h(S.q) + '"></label></form>' +
       '<nav class="nav" aria-label="Hauptmenü">' + nav + '</nav>' +
-      '<div class="who"><span>Angemeldet als <b>' + APP.h(me.name || '') + '</b>' + (me.rolle === 'kontrolle' ? ' · Kontrolle' : '') + '</span><button type="button" class="btn small" data-act="abmelden">Abmelden</button><span>Version ' + APP.VERSION + '</span></div></aside>' +
-      '<header class="mobil-top"><div class="brand"><div class="logo">S1</div><b>S1 Tax</b></div><button type="button" class="btn small" data-go="suche" aria-label="Suchen">' + APP.icon('such') + '</button></header>' +
-      '<main class="main" id="main">' + off + inner + '</main>' +
+      '<div class="who"><span>Angemeldet als <b>' + APP.h(me.name || '') + '</b>' + (me.rolle === 'kontrolle' ? ' · Kontrolle' : '') + '</span><div class="chips"><button type="button" class="btn small" data-act="aktualisieren">' + APP.icon('neu', 14) + ' Aktualisieren</button><button type="button" class="btn small" data-act="abmelden">Abmelden</button></div><span>Version ' + APP.VERSION + '</span></div></aside>' +
+      '<header class="mobil-top"><button type="button" class="brand" data-go="uebersicht" aria-label="Zur Übersicht"><div class="logo">S1</div><b>S1 Tax</b></button><div class="kopf"><button type="button" class="btn small" data-act="aktualisieren" aria-label="Aktualisieren">' + APP.icon('neu') + '</button><button type="button" class="btn small" data-go="suche" aria-label="Suchen">' + APP.icon('such') + '</button></div></header>' +
+      '<main class="main" id="main">' + (S.neueVersion ? '<div class="offline neuv"><span class="grow">Es gibt eine neue Version der App.</span><button type="button" class="btn small pri" data-act="aktualisieren">Jetzt aktualisieren</button></div>' : '') + off + inner + '</main>' +
       '<nav class="tabbar" aria-label="Kurzmenü">' + tab('uebersicht', 'Übersicht', 'haus', (b.fragen ? '<span class="dot"></span>' : '')) + tab('monat', 'Belege', 'belege', b.monat ? '<span class="dot"></span>' : '') +
       '<button type="button" class="scan" data-act="foto">' + APP.icon('kamera', 24) + '<span>Scannen</span></button>' +
       tab('bank', 'Bank', 'bank', b.bank ? '<span class="dot"></span>' : '') + '<button type="button" data-act="mehr"' + (['uebersicht', 'monat', 'bank'].indexOf(cur) < 0 ? ' aria-current="page"' : '') + '>' + APP.icon('mehr', 22) + '<span>Mehr</span></button></nav>' +

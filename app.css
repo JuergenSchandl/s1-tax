@@ -30,6 +30,12 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .shell { display: flex; min-height: 100vh; }
 .side { flex: 0 0 236px; background: var(--card); border-right: 1px solid var(--line); padding: 18px 12px; display: flex; flex-direction: column; gap: 16px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 4px; }
+button.brand { background: none; border: 0; cursor: pointer; color: inherit; font: inherit; text-align: left; border-radius: 12px; }
+button.brand:hover .logo { background: var(--blue); }
+.kopf { display: flex; gap: 8px; }
+.offline.neuv { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--blueBg); color: var(--blue); margin-bottom: 12px; }
+.dreht svg { animation: s1dreh .8s linear infinite; }
+@keyframes s1dreh { to { transform: rotate(360deg); } }
 .brand .logo { width: 34px; height: 34px; border-radius: 10px; background: var(--navy); color: #fff; display: flex; align-items: center; justify-content: center; font-family: var(--head); font-weight: 600; font-size: 15px; flex: none; }
 .brand b { font-family: var(--head); font-weight: 600; font-size: 19px; display: block; line-height: 1.1; }
 .nav { display: flex; flex-direction: column; gap: 2px; }

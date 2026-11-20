@@ -65,6 +65,25 @@
     var offen = document.getElementById('dlg').open, tippt = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
     APP.laden().then(function () { if (!offen && !tippt) APP.render(); }).catch(function () {});
   });
+  /* neue Version da? index.html vergleichen (die Dateien tragen ?v=…) */
+  var geladenV = (function () { var x = document.querySelector('script[src*="js/core.js"]'); var m = x && x.getAttribute('src').match(/[?&]v=([\w.]+)/); return m ? m[1] : null; })();
+  var zuletztGeprueft = 0;
+  function versionPruefen() {
+    if (!geladenV || !navigator.onLine || S.neueVersion || Date.now() - zuletztGeprueft < 5 * 60000) return;
+    zuletztGeprueft = Date.now();
+    fetch('index.html?pruef=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).then(function (t) {
+      var m = t.match(/js\/core\.js\?v=([\w.]+)/);
+      if (!m || m[1] === geladenV) return;
+      S.neueVersion = true;
+      var offen = document.getElementById('dlg').open, tippt = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+      if (!offen && !tippt && S.me) APP.render();
+    }).catch(function () { /* egal */ });
+  }
+  APP.versionPruefen = versionPruefen;
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') versionPruefen(); });
+  setInterval(versionPruefen, 30 * 60000);
+  setTimeout(versionPruefen, 8000);
+  try { if (sessionStorage.getItem('s1tax:aktualisiert')) { sessionStorage.removeItem('s1tax:aktualisiert'); setTimeout(function () { APP.toast('Aktualisiert · Version ' + APP.VERSION); }, 1200); } } catch (e) { /* egal */ }
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(function () {});
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
