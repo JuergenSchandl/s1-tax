@@ -245,10 +245,11 @@
     for (var i = 0; i < t.length; i++) { var oben = t[i][0]; if (einkommen > unten) st += (Math.min(einkommen, oben) - unten) * t[i][1]; unten = oben; }
     return L.r2(Math.max(0, st));
   };
-  /* PKW-Kosten für den Privatanteil: Konten 7250–7259 und die PKW-Versicherung */
+  /* PKW-Kosten für den Privatanteil, wie CNC ihn rechnet (2024: 20 % von PKW-Aufwand und Leasing):
+     Betriebskosten, Parken, Fahrzeugmiete 7250–7259, PKW-Leasing 7260, Kfz-Steuer 7290, Treibstoff 5703 und die PKW-Versicherung */
   L.pkwKosten = function (b) {
     var k = Number(b.konto);
-    return (k >= 7250 && k <= 7259) || (k === 7700 && /\b(pkw|kfz|auto)/i.test(String(b.text || '') + ' ' + String(b.lieferant || '')));
+    return (k >= 7250 && k <= 7260) || k === 7290 || k === 5703 || (k === 7700 && /\b(pkw|kfz|auto)/i.test(String(b.text || '') + ' ' + String(b.lieferant || '')));
   };
   L.vorschau = function (D, jahr) {
     var erl = 0, aus = 0, svs = 0, anl = 0, letzt = 0, pkw = 0;
