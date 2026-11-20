@@ -150,10 +150,18 @@
     if (e.target.id === 'f-foto' && e.target.files.length) {
       var f = e.target.files[0];
       if (S.view !== 'monat') { S.uploads = []; }
-      hochladen([f], { quelle: 'scan', zahlung: 'bar', heute: S.view !== 'monat' }).then(function () {
-        var u = S.uploads[0];
-        if (u && u.gruppe) APP.belegDialog(u.gruppe, { nachScan: true });
-        else if (u && u.status === 'wartet') APP.toast('Kein Netz: Das Foto ist gespeichert und wird hochgeladen, sobald Netz da ist.');
+      /* Foto zuerst zuschneiden und gerade richten (im Gerät, auch ohne Netz) */
+      var zs = APP.zuschneiden && APP.zuschnittAn();
+      var platz = zs ? { name: f.name || 'Foto', status: 'laedt', text: 'wird zugeschnitten' } : null;
+      if (platz) { S.uploads.unshift(platz); APP.render(); }
+      (zs ? APP.zuschneiden(f) : Promise.resolve({ datei: f })).then(function (z) {
+        if (platz) { var ix = S.uploads.indexOf(platz); if (ix >= 0) S.uploads.splice(ix, 1); }
+        return hochladen([z.datei], { quelle: 'scan', zahlung: 'bar', heute: S.view !== 'monat' }).then(function () {
+          var u = S.uploads[0];
+          if (u && u.gruppe && z.zugeschnitten) { S.zuschnitt = S.zuschnitt || {}; S.zuschnitt[u.gruppe] = z.original; }
+          if (u && u.gruppe) APP.belegDialog(u.gruppe, { nachScan: true });
+          else if (u && u.status === 'wartet') APP.toast('Kein Netz: Das Foto ist gespeichert und wird hochgeladen, sobald Netz da ist.');
+        });
       });
     }
   });
@@ -253,6 +261,7 @@
     var titel = neu ? 'Neuer Beleg' : 'Beleg ' + (L.belegNr(g) || '(noch ohne Nummer)') + (g.lieferant ? ' · ' + g.lieferant : '');
     var body = (opt.nachScan ? '<div class="note blue">Bitte kurz prüfen und speichern. ' + (f.lesung && f.lesung.ki ? '' : 'Was die App nicht lesen konnte, bitte ergänzen.') + '</div>' : '') +
       (g.storniert ? '<div class="note bad">Dieser Beleg ist storniert und zählt nirgends mit.</div>' : '') +
+      (!neu && S.zuschnitt && S.zuschnitt[g.gruppe] ? '<div class="note" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="grow">Foto automatisch zugeschnitten und gerade gerichtet.</span><button type="button" class="btn small" data-act="zuschnitt-original" data-g="' + h(g.gruppe) + '">Ganzes Foto verwenden</button></div>' : '') +
       (!neu ? lesungHinweis(g) : '') +
       '<div class="cols"><div class="narrow" style="flex-basis:340px">' + (neu ? '<div class="note">Für Belege ohne Datei, z. B. wenn der Kontoauszug als Beleg reicht. Foto oder PDF kannst du danach hinzufügen.</div>' : dateiVorschau(g)) +
       (bk ? '<div class="note ok" style="margin-top:8px">Mit dem Konto verbunden: ' + L.datum(bk.datum) + ' · ' + h(bk.name) + ' · ' + L.eur(bk.betrag) + '</div>' : (!neu && g.zahlung === 'bank' ? '<div class="note" style="margin-top:8px">Noch keiner Bankbuchung zugeordnet.</div>' : '')) +
@@ -413,16 +422,27 @@
   APP.A['datei-ersetzen'] = function (el) {
     var i = document.getElementById('f-ersetzen'); i.value = ''; i.dataset.g = el.dataset.g; i.click();
   };
-  document.addEventListener('change', function (e) {
-    if (e.target.id !== 'f-ersetzen' || !e.target.files.length) return;
-    var g = e.target.dataset.g, file = e.target.files[0], row = D.belege.find(function (b) { return b.gruppe === g; });
-    APP.bildVerkleinern(file).then(function (blob) {
+  function dateiErsetzen(g, file) {
+    var row = D.belege.find(function (b) { return b.gruppe === g; });
+    return APP.bildVerkleinern(file).then(function (blob) {
       var ext = /pdf/.test(blob.type) ? 'pdf' : /png/.test(blob.type) ? 'png' : 'jpg';
       var path = row.jahr + '/' + L.p2(row.monat) + '/' + APP.uuid() + '.' + ext;
       return APP.hochladen('belege', path, blob).then(function () {
         return Promise.all(D.belege.filter(function (b) { return b.gruppe === g; }).map(function (b) { return APP.upd('belege', { id: b.id }, { datei: path }); }));
       });
-    }).then(function () {
+    });
+  }
+  APP.A['zuschnitt-original'] = function (el) {
+    var g = el.dataset.g, orig = S.zuschnitt && S.zuschnitt[g];
+    if (!orig) return;
+    APP.lauf(el, function () {
+      return dateiErsetzen(g, orig).then(function () { delete S.zuschnitt[g]; APP.toast('Das ganze Foto wird verwendet.'); APP.belegDialog(g); APP.render(); });
+    });
+  };
+  document.addEventListener('change', function (e) {
+    if (e.target.id !== 'f-ersetzen' || !e.target.files.length) return;
+    var g = e.target.dataset.g, file = e.target.files[0];
+    dateiErsetzen(g, file).then(function () {
       APP.toast('Datei gespeichert. Die alte Datei bleibt im Archiv.');
       return APP.bestaetigen('Soll die App die neue Datei lesen und die Angaben vorschlagen?', 'Lesen').then(function (ok) { if (ok) return APP.belegLesen(D.belege.find(function (b) { return b.gruppe === g; })); });
     }).then(function () { APP.belegDialog(g); APP.render(); }).catch(function (e) { APP.fehler(e, 'Datei'); });

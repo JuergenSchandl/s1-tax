@@ -232,6 +232,7 @@
         (APP.passkeyMoeglich() ? '<label class="f" style="flex-direction:row;gap:10px;align-items:flex-start;font-weight:500"><input type="checkbox" data-act="sperre-umschalten"' + (APP.sperreAn() ? ' checked' : '') + ' style="margin-top:3px"> <span>App-Sperre auf diesem Gerät: beim Öffnen und nach 5 Minuten im Hintergrund mit Fingerabdruck / Face ID entsperren<span class="hint" style="display:block">Dafür muss dieses Gerät oben eingerichtet sein.</span></span></label>' : '') +
         '<div class="chips"><button type="button" class="btn small" data-act="passwort">Passwort ändern</button><button type="button" class="btn small" data-act="abmelden">Abmelden</button></div></div>' +
         APP.pushBereich() +
+        '<div class="card"><div class="head"><h2>Fotos von Belegen</h2></div><label class="f" style="flex-direction:row;gap:10px;align-items:flex-start;font-weight:500"><input type="checkbox" data-act="zuschnitt-umschalten"' + (APP.zuschnittAn && APP.zuschnittAn() ? ' checked' : '') + ' style="margin-top:3px"> <span>Fotos automatisch zuschneiden und gerade richten<span class="hint" style="display:block">Gilt für dieses Gerät. Erkennt die App den Beleg nicht sicher, bleibt das Foto, wie es ist. Nach dem Foto kannst du auch das ganze Foto nehmen.</span></span></label></div>' +
         '<div class="card"><h2>Über die App</h2><p class="s" style="margin:0">S1 Tax · Version ' + APP.VERSION + '<br>Daten in Supabase (EU, Frankfurt), nur für Jürgen und Dagmar zugänglich.<br>Daten geladen: ' + (S.stand ? new Date(S.stand).toLocaleString('de-AT') : '–') + '</p><div class="chips"><button type="button" class="btn small" data-act="neu-laden">Daten neu laden</button><button type="button" class="btn small" data-act="daten-export">Alle Daten herunterladen</button></div></div>' +
         '</div></div>';
     },
@@ -330,6 +331,10 @@
   };
   APP.A['mit-passwort'] = function () {
     APP.sb.auth.signOut({ scope: 'local' }).then(function () { S.gesperrt = false; S.me = null; S.loginFehler = ''; APP.render(); });
+  };
+  APP.A['zuschnitt-umschalten'] = function (el) {
+    try { localStorage.setItem('s1tax:zuschnitt', el.checked ? '1' : '0'); } catch (e) { /* egal */ }
+    APP.toast(el.checked ? 'Fotos werden automatisch zugeschnitten.' : 'Fotos bleiben unverändert.');
   };
   APP.A['sperre-umschalten'] = function (el) {
     try { localStorage.setItem('s1tax:sperre', el.checked ? '1' : '0'); } catch (e) { /* egal */ }
