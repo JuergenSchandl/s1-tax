@@ -162,14 +162,31 @@ Deno.serve(async (req) => {
   }).filter((z: { brutto: number }) => z.brutto !== 0);
   if (!zeilen.length) zeilen = [{ konto: null, text: String(r.text || ""), brutto: 0, ust: 0, netto: 0, steuerart: "vst", steuersatz: 20 }];
 
-  // doppelt? gleiche Rechnungsnummer oder gleicher Betrag und Tag beim gleichen Lieferanten
+  // doppelt? gleiche Rechnungsnummer (beim Beleg oder im Kontoauszug) oder gleicher Lieferant mit gleichem Betrag kurz danach
   const brutto = zahl(zeilen.reduce((n: number, z: { brutto: number }) => n + z.brutto, 0));
-  let doppelt: string | null = null;
-  if (r.datum || r.rechnungsnr) {
-    const { data: kand } = await sb.from("belege").select("gruppe, jahr, monat, nr, lieferant, datum, brutto, rechnungsnr").neq("gruppe", row.gruppe).eq("storniert", false).or(`rechnungsnr.eq."${String(r.rechnungsnr || "-").replace(/["\\]/g, "")}",datum.eq.${/^\d{4}-\d{2}-\d{2}$/.test(r.datum || "") ? r.datum : "1900-01-01"}`).limit(50);
-    const d = (kand || []).find((k) => (r.rechnungsnr && k.rechnungsnr === r.rechnungsnr && L.aehnlich(k.lieferant, r.lieferant)) || (k.datum === r.datum && Math.abs(Number(k.brutto) - brutto) < 0.01 && L.aehnlich(k.lieferant, r.lieferant)));
-    if (d) doppelt = `${d.lieferant} vom ${L.datum(d.datum)} über ${L.eur(d.brutto)} (${d.nr ? d.nr + "/" + String(d.jahr).slice(2) : L.MONATE[d.monat] + ", noch ohne Nummer"})`;
+  const SEL = "gruppe, jahr, monat, nr, lieferant, datum, brutto, rechnungsnr";
+  // deno-lint-ignore no-explicit-any
+  let treffer: any = null;
+  const rnr = r.rechnungsnr ? String(r.rechnungsnr).replace(/["\\%,()*]/g, "").trim() : "";
+  if (rnr.length >= 4) {
+    const { data: k1 } = await sb.from("belege").select(SEL).neq("gruppe", row.gruppe).eq("storniert", false).eq("rechnungsnr", rnr).limit(5);
+    treffer = (k1 || []).find((k) => L.aehnlich(k.lieferant, r.lieferant)) || null;
+    if (!treffer && rnr.length >= 6) {
+      const { data: b1 } = await sb.from("bank").select("beleg_gruppe").not("beleg_gruppe", "is", null).ilike("info", `%${rnr}%`).limit(3);
+      for (const b of b1 || []) {
+        if (b.beleg_gruppe === row.gruppe) continue;
+        const { data: g } = await sb.from("belege").select(SEL).eq("gruppe", b.beleg_gruppe).eq("storniert", false).limit(1);
+        if (g && g[0]) { treffer = g[0]; break; }
+      }
+    }
   }
+  if (!treffer && /^\d{4}-\d{2}-\d{2}$/.test(r.datum || "") && brutto > 0) {
+    const tag = (n: number) => { const [y, mo, d] = String(r.datum).split("-").map(Number); return new Date(Date.UTC(y, mo - 1, d + n)).toISOString().slice(0, 10); };
+    const { data: k2 } = await sb.from("belege").select(SEL).neq("gruppe", row.gruppe).eq("storniert", false).gte("datum", tag(-10)).lte("datum", tag(45)).gte("brutto", brutto - 0.01).lte("brutto", brutto + 0.01).limit(20);
+    treffer = (k2 || []).find((k) => L.aehnlich(k.lieferant, r.lieferant)) || null;
+  }
+  const doppelt = treffer ? `${treffer.lieferant} vom ${L.datum(treffer.datum)} über ${L.eur(treffer.brutto)} (${treffer.nr ? "Beleg " + treffer.nr + "/" + String(treffer.jahr).slice(2) : L.MONATE[treffer.monat] + ", noch ohne Nummer"})` : null;
+  const doppeltGruppe = treffer ? treffer.gruppe : null;
 
   let frage = r.frage ? String(r.frage) : null;
   if (r.an_s1 === false && !frage) frage = "Die Rechnung scheint nicht an S1 Secure adressiert zu sein. Geschäftlich?";
@@ -186,9 +203,11 @@ Deno.serve(async (req) => {
     garantie_bis: garantie,
     bestaetigt: false,
     status: frage ? "unklar" : row.status,
-    lesung: { ...(row.lesung || {}), ki: { ...r, zeilen: undefined, volltext: undefined, frage, doppelt }, modell, zeit: new Date().toISOString() },
+    lesung: { ...(row.lesung || {}), ki: { ...r, zeilen: undefined, volltext: undefined, frage, doppelt, doppelt_gruppe: doppeltGruppe }, modell, zeit: new Date().toISOString() },
   };
   const erste = zeilen[0];
+  // neu gelesen: frühere Zusatzzeilen derselben Rechnung ersetzen
+  await sb.from("belege").update({ storniert: true, notiz: "beim Neu-Lesen ersetzt" }).eq("gruppe", row.gruppe).neq("id", row.id).eq("storniert", false);
   const { error: e3 } = await sb.from("belege").update({ ...gemeinsam, ...erste }).eq("id", row.id);
   if (e3) return json({ error: e3.message }, 500);
   if (zeilen.length > 1) {
@@ -199,5 +218,5 @@ Deno.serve(async (req) => {
     if (e4) return json({ error: e4.message }, 500);
   }
   if (frage) await sb.from("fragen").insert({ tabelle: "belege", datensatz: row.id, jahr: row.jahr, monat: row.monat, text: frage, von: "app", an: "j" });
-  return json({ ok: true, zeilen: zeilen.length, brutto, doppelt, frage });
+  return json({ ok: true, zeilen: zeilen.length, brutto, doppelt, doppelt_gruppe: doppeltGruppe, frage });
 });

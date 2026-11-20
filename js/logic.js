@@ -65,7 +65,9 @@
 
   /* ---------- Belege ---------- */
   L.aktiv = function (b) { return !b.storniert; };
-  L.zaehlt = function (b) { return !b.storniert && b.status !== 'privat'; };
+  /* zählt in UVA, Excel und Summen: nicht storniert, nicht privat, kein ungeklärtes Doppel */
+  L.doppelVerdacht = function (b) { return b.bestaetigt === false && !!(b.lesung && b.lesung.ki && b.lesung.ki.doppelt_gruppe); };
+  L.zaehlt = function (b) { return !b.storniert && b.status !== 'privat' && !L.doppelVerdacht(b); };
   L.belegNr = function (b) { return b && b.nr ? b.nr + '/' + String(b.jahr).slice(2) : ''; };
   L.gruppen = function (belege, filter) {
     var map = {}, out = [];

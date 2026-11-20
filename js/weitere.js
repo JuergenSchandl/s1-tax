@@ -231,7 +231,7 @@
         (APP.passkeyMoeglich() ? '<div><button type="button" class="btn pri" data-act="passkey-neu">Fingerabdruck / Face ID einrichten</button></div><p class="s" style="margin:0">Gilt für dieses Gerät. Jedes Handy und jeder PC wird einmal eingerichtet.</p>' : '') +
         '<div class="chips"><button type="button" class="btn small" data-act="passwort">Passwort ändern</button><button type="button" class="btn small" data-act="abmelden">Abmelden</button></div></div>' +
         APP.pushBereich() +
-        '<div class="card"><h2>Über die App</h2><p class="s" style="margin:0">S1 Tax · Version ' + APP.VERSION + '<br>Daten in Supabase (EU, Frankfurt), nur für Jürgen und Dagmar zugänglich.<br>Daten geladen: ' + (S.stand ? new Date(S.stand).toLocaleString('de-AT') : '–') + '</p><div><button type="button" class="btn small" data-act="neu-laden">Daten neu laden</button></div></div>' +
+        '<div class="card"><h2>Über die App</h2><p class="s" style="margin:0">S1 Tax · Version ' + APP.VERSION + '<br>Daten in Supabase (EU, Frankfurt), nur für Jürgen und Dagmar zugänglich.<br>Daten geladen: ' + (S.stand ? new Date(S.stand).toLocaleString('de-AT') : '–') + '</p><div class="chips"><button type="button" class="btn small" data-act="neu-laden">Daten neu laden</button><button type="button" class="btn small" data-act="daten-export">Alle Daten herunterladen</button></div></div>' +
         '</div></div>';
     },
     after: function () { if (!KI.stand) kiPruefen(); }
@@ -253,6 +253,7 @@
   };
   APP.A['ordner-waehlen'] = function () { APP.ordnerWaehlen().then(function () { APP.toast('Ordner gewählt. Die erste Sicherung läuft …'); return APP.sichern(false); }).catch(function (e) { if (e && e.name !== 'AbortError') APP.fehler(e, 'Ordner'); }); };
   APP.A.sichern = function () { APP.sichern(false); };
+  APP.A['daten-export'] = function () { APP.speichernUnter(APP.datenExport(), 'S1-Tax-Daten-' + L.heute() + '.json'); };
   APP.A['neu-laden'] = function (el) { APP.lauf(el, function () { return APP.laden().then(function () { APP.toast('Neu geladen.'); APP.render(); }); }); };
   APP.A['protokoll-laden'] = function (el) {
     APP.lauf(el, function () {

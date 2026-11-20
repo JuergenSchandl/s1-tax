@@ -191,6 +191,14 @@
         jobs.push(function () { return window.XLSXW.build(L.monatsExcel(D, jm[0], jm[1])).then(function (blob) { return schreiben(o.handle, 'Monats-Excel/' + jm[0] + '/' + L.monatsDatei(jm[0], jm[1]), blob); }); });
       });
       jobs.push(function () { return window.XLSXW.build(L.rechnungsnummernExcel(D)).then(function (blob) { return schreiben(o.handle, 'Rechnungsnummern.xlsx', blob); }); });
+      /* alle Daten als JSON: aktueller Stand und je Monat eine Kopie (Supabase Free hat keine eigene Sicherung) */
+      jobs.push(function () {
+        var blob = APP.datenExport(), monat = L.heute().slice(0, 7);
+        return schreiben(o.handle, 'Datensicherung/S1-Tax-Daten-aktuell.json', blob).then(function () {
+          if (log['json:' + monat]) return;
+          return schreiben(o.handle, 'Datensicherung/S1-Tax-Daten-' + monat + '.json', blob).then(function () { log['json:' + monat] = 1; });
+        });
+      });
       return jobs.reduce(function (p, j) { return p.then(j); }, Promise.resolve()).then(function () {
         localStorage.setItem('s1tax:sicherung-log', JSON.stringify(log));
         o.letzte = { zeit: new Date().toISOString(), neu: neu, ordner: o.handle.name };
@@ -198,6 +206,11 @@
         if (!still) APP.toast('Gesichert: ' + (neu ? neu + ' neue Datei' + (neu === 1 ? '' : 'en') + ', ' : '') + 'Excel-Dateien aktualisiert.');
       });
     }).catch(function (e) { if (!still) APP.fehler(e, 'Sicherung'); }).then(function () { o.laeuft = false; if (!still) APP.render(); });
+  };
+
+  APP.datenExport = function () {
+    var daten = { app: 'S1 Tax', version: APP.VERSION, stand: new Date().toISOString(), belege: D.belege, bank: D.bank, ausgang: D.ausgang, kunden: D.kunden, monate: D.monate, einstellungen: D.einst, fragen: D.fragen, hinweise: D.hinweise };
+    return new Blob([JSON.stringify(daten)], { type: 'application/json' });
   };
 
   /* ---------- Mitteilungen aufs Handy ---------- */

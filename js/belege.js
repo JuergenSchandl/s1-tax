@@ -135,6 +135,7 @@
           u.gruppe = r.gruppe;
           if (r.leseFehler) { u.status = 'fehler'; u.text = r.leseFehler.length > 60 ? 'selbst ausfüllen' : r.leseFehler; return r; }
           u.status = 'fertig'; u.text = (r.lieferant || 'gelesen') + ' · ' + L.eur(r.brutto) + (r.verschoben ? ' · nach ' + r.verschoben : '');
+          if (r.r && r.r.doppelt) { u.status = 'fehler'; u.text = 'gibt es vermutlich schon: ' + r.r.doppelt; }
           return r;
         }).catch(function (e) { u.status = 'fehler'; u.text = e && e.message || String(e); });
       });
@@ -218,8 +219,13 @@
     if (k.begruendung) t.push(h(k.begruendung));
     if (k.an_s1 === false) t.push('<b>Achtung:</b> Die Rechnung scheint nicht an S1 Secure zu gehen.');
     if (k.frage) t.push('<b>Frage der App:</b> ' + h(k.frage));
-    if (k.doppelt) t.push('<b>Möglicherweise doppelt:</b> ' + h(k.doppelt));
-    return t.length ? '<div class="note blue"><b>Von der App gelesen.</b> ' + t.join(' ') + '</div>' : '';
+    var dg = k.doppelt_gruppe && L.gruppen(D.belege, function (b) { return b.gruppe === k.doppelt_gruppe; })[0];
+    var doppel = '';
+    if (k.doppelt && g.bestaetigt === false && !g.storniert) {
+      doppel = '<div class="note warn"><b>Diesen Beleg gibt es vermutlich schon:</b> ' + h(k.doppelt) + '. Er zählt deshalb vorerst nirgends mit.' +
+        (dg ? '<div class="chips" style="margin-top:8px"><button type="button" class="btn small pri" data-act="doppelt-anhaengen" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Datei an ' + (L.belegNr(dg) ? 'Beleg ' + L.belegNr(dg) : 'den bestehenden Beleg') + ' hängen</button><button type="button" class="btn small" data-act="beleg" data-g="' + dg.gruppe + '">Bestehenden Beleg ansehen</button><button type="button" class="btn small ghost" data-act="doppelt-nein" data-g="' + g.gruppe + '">Ist kein Doppel</button></div>' : '') + '</div>';
+    }
+    return (t.length ? '<div class="note blue"><b>Von der App gelesen.</b> ' + t.join(' ') + '</div>' : '') + doppel;
   }
   function fragenBlock(tabelle, ids) {
     var fr = D.fragen.filter(function (f) { return f.tabelle === tabelle && ids.indexOf(f.datensatz) >= 0; });
@@ -343,11 +349,17 @@
     if (fehler) { APP.toast(fehler, { bad: true }); return; }
     var gemeinsam = { datum: datum, lieferant: v.lieferant.trim(), zahlung: st.zahlung, status: st.status, jahr: jahr, monat: monat, rechnungsnr: v.rechnungsnr || null, notiz: v.notiz || null, anlage: !!v.anlage, garantie_bis: v.garantie_bis || null, bestaetigt: true };
     if (!v.anlage && st.status !== 'privat' && zeilen.some(function (z) { return z.netto > 1000 && Number(z.konto) >= 4000; })) APP.toast('Hinweis: über 1.000 € netto – wenn es ein Gerät ist, als Anlagegut markieren.');
+    var verdacht = st.g && st.g.rows.some(L.doppelVerdacht);
+    (verdacht ? APP.bestaetigen('Die App hält diesen Beleg für ein Doppel eines bestehenden Belegs. Wenn du ihn trotzdem bestätigst, zählt er zusätzlich mit (Vorsteuer, Excel für CNC). Wirklich als eigenen Beleg speichern?', 'Ja, eigener Beleg') : Promise.resolve(true)).then(function (ok) {
+    if (!ok) return;
+    if (verdacht) st.g.rows.forEach(function (b) { if (b.lesung && b.lesung.ki) { b._lesung = JSON.parse(JSON.stringify(b.lesung)); b._lesung.ki.doppelt_gruppe = null; b._lesung.ki.doppelt_geprueft = APP.ich(); } });
     APP.lauf(el, function () {
       var gruppe = st.g ? st.g.gruppe : APP.uuid(), jobs = [];
       var alt = st.g ? st.g.rows.filter(function (b) { return !b.storniert; }) : [];
       zeilen.forEach(function (z) {
         var row = Object.assign({}, gemeinsam, { text: z.text || '', konto: z.konto, brutto: z.brutto, netto: z.netto, ust: z.ust, steuerart: z.steuerart, steuersatz: z.steuersatz });
+        var alteZeile = z.id && st.g ? st.g.rows.find(function (b) { return b.id === z.id; }) : null;
+        if (alteZeile && alteZeile._lesung) row.lesung = alteZeile._lesung;
         if (z.id) jobs.push(APP.upd('belege', { id: z.id }, row));
         else jobs.push(APP.ins('belege', [Object.assign(row, { gruppe: gruppe, quelle: st.g ? (st.g.quelle || 'manuell') : 'manuell', datei: st.g ? st.g.datei : null })]));
       });
@@ -357,6 +369,7 @@
       }).then(function () {
         APP.schliessen(); APP.toast('Gespeichert.'); APP.render();
       });
+    });
     });
   };
   APP.A['beleg-storno'] = function (el) {
@@ -394,6 +407,33 @@
       return APP.bestaetigen('Soll die App die neue Datei lesen und die Angaben vorschlagen?', 'Lesen').then(function (ok) { if (ok) return APP.belegLesen(D.belege.find(function (b) { return b.gruppe === g; })); });
     }).then(function () { APP.belegDialog(g); APP.render(); }).catch(function (e) { APP.fehler(e, 'Datei'); });
   });
+
+  /* ---------- doppelte Belege: Datei an den bestehenden Beleg hängen ---------- */
+  APP.A['doppelt-anhaengen'] = function (el) {
+    var neu = D.belege.filter(function (b) { return b.gruppe === el.dataset.g; }), ziel = D.belege.filter(function (b) { return b.gruppe === el.dataset.ziel && !b.storniert; });
+    if (!neu.length || !ziel.length) return;
+    var n0 = neu[0], zg = L.gruppen(ziel)[0], name = L.belegNr(zg) ? 'Beleg ' + L.belegNr(zg) : 'den bestehenden Beleg';
+    var weiter = zg.datei && zg.datei !== n0.datei ? APP.bestaetigen(h(name) + ' hat schon eine Datei. Durch diese ersetzen? Die alte bleibt im Archiv.', 'Ersetzen') : Promise.resolve(true);
+    weiter.then(function (ok) {
+      if (!ok) return;
+      return APP.lauf(el, function () {
+        return Promise.all(ziel.map(function (b) {
+          return APP.upd('belege', { id: b.id }, { datei: n0.datei, rechnungsnr: b.rechnungsnr || n0.rechnungsnr, lieferant_uid: b.lieferant_uid || n0.lieferant_uid, land: b.land || n0.land, volltext: n0.volltext || b.volltext, lesung: Object.assign({}, b.lesung || {}, { hash: (n0.lesung || {}).hash, angehaengt: new Date().toISOString() }) });
+        })).then(function () {
+          return Promise.all(neu.map(function (b) { return APP.upd('belege', { id: b.id }, { storniert: true, notiz: 'Doppelt: Datei an ' + name + ' angehängt' }); }));
+        }).then(function () { APP.toast('Datei an ' + name + ' angehängt, der doppelte Eintrag ist storniert.'); APP.belegDialog(zg.gruppe); APP.render(); });
+      });
+    }).catch(APP.fehler);
+  };
+  APP.A['doppelt-nein'] = function (el) {
+    var rows = D.belege.filter(function (b) { return b.gruppe === el.dataset.g; });
+    APP.lauf(el, function () {
+      return Promise.all(rows.map(function (b) {
+        var l = JSON.parse(JSON.stringify(b.lesung || {})); if (l.ki) { l.ki.doppelt = null; l.ki.doppelt_gruppe = null; l.ki.doppelt_geprueft = APP.ich(); }
+        return APP.upd('belege', { id: b.id }, { lesung: l });
+      })).then(function () { APP.toast('Gut, der Beleg zählt wieder mit.'); APP.belegDialog(el.dataset.g); APP.render(); });
+    });
+  };
 
   /* ---------- Rückfragen ---------- */
   APP.A['frage-stellen'] = function (el) {
