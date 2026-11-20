@@ -142,7 +142,7 @@
           if (r.abgelegt) { u.gruppe = null; u.status = 'fertig'; u.text = 'Post von ' + (r.abgelegt.stelle || 'Behörde') + ', bei den Unterlagen abgelegt'; APP.toast(APP.postText(r.r)); return r; }
           u.gruppe = r.gruppe;
           if (r.leseFehler) { u.status = 'fehler'; u.text = r.leseFehler.length > 60 ? 'selbst ausfüllen' : r.leseFehler; return r; }
-          u.status = 'fertig'; u.text = (r.lieferant || 'gelesen') + ' · ' + L.eur(r.brutto) + (r.verschoben ? ' · nach ' + r.verschoben : '');
+          u.status = 'fertig'; u.text = (r.lieferant || 'gelesen') + ' · ' + L.eur(r.brutto) + (r.verschoben ? ' · nach ' + r.verschoben : '') + (r.auto ? ' · bestätigt' : '');
           if (r.r && r.r.doppelt) { u.status = 'fehler'; u.text = 'gibt es vermutlich schon: ' + r.r.doppelt; }
           return r;
         }).catch(function (e) { u.status = 'fehler'; u.text = e && e.message || String(e); });
@@ -234,7 +234,16 @@
   }
   function lesungHinweis(g) {
     var l = g.rows[0].lesung;
-    if (!l || !l.ki) return '';
+    var auto = g.rows.map(function (b) { return b.lesung && b.lesung.auto; }).filter(Boolean)[0];
+    var autoNote = auto ? '<div class="note ok"><b>Automatisch bestätigt</b> am ' + L.datum(auto.am.slice(0, 10)) + ': ' + h(auto.grund) + '. Du kannst trotzdem alles ändern.</div>' : '';
+    /* noch nicht bestätigt und anders als bisher gebucht: zeigen, wie es bisher war */
+    var bisher = '';
+    if (g.bestaetigt === false && !g.storniert && g.lieferant) {
+      var v = L.verlauf(D, g.lieferant, g.gruppe), neuP = g.rows.filter(function (b) { return !b.storniert && b.status !== 'privat' && b.konto; }).map(function (b) { return b.konto + '|' + (b.steuerart || 'vst'); });
+      if (v.gruppen && neuP.some(function (p) { return !v.paare[p]; }))
+        bisher = '<div class="note warn"><b>Bisher bei ' + h(g.lieferant) + ' so gebucht:</b> ' + Object.keys(v.paare).sort(function (a, b) { return v.paare[b] - v.paare[a]; }).slice(0, 3).map(function (p) { return L.paarText(p, v.paare[p]); }).join('; ') + '. Deshalb bitte prüfen.</div>';
+    }
+    if (!l || !l.ki) return autoNote + bisher;
     var k = l.ki, t = [];
     if (k.begruendung) t.push(h(k.begruendung));
     if (k.an_s1 === false) t.push('<b>Achtung:</b> Die Rechnung scheint nicht an S1 Secure zu gehen.');
@@ -245,7 +254,7 @@
       doppel = '<div class="note warn"><b>Diesen Beleg gibt es vermutlich schon:</b> ' + h(k.doppelt) + '. Er zählt deshalb vorerst nirgends mit.' +
         (dg ? '<div class="chips" style="margin-top:8px"><button type="button" class="btn small pri" data-act="doppelt-anhaengen" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Datei an ' + (L.belegNr(dg) ? 'Beleg ' + L.belegNr(dg) : 'den bestehenden Beleg') + ' hängen</button><button type="button" class="btn small" data-act="beleg" data-g="' + dg.gruppe + '">Bestehenden Beleg ansehen</button><button type="button" class="btn small ghost" data-act="doppelt-nein" data-g="' + g.gruppe + '">Ist kein Doppel</button></div>' : '') + '</div>';
     }
-    return (t.length ? '<div class="note blue"><b>Von der App gelesen.</b> ' + t.join(' ') + '</div>' : '') + doppel;
+    return autoNote + (t.length ? '<div class="note blue"><b>Von der App gelesen.</b> ' + t.join(' ') + '</div>' : '') + bisher + doppel;
   }
   function fragenBlock(tabelle, ids) {
     var fr = D.fragen.filter(function (f) { return f.tabelle === tabelle && ids.indexOf(f.datensatz) >= 0; });

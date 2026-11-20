@@ -42,6 +42,7 @@
   };
   function danach() {
     APP.warteschlangeSenden();
+    APP.autoBestaetigen().then(function (n) { if (n) { APP.toast(n === 1 ? 'Ein eindeutiger Beleg wurde automatisch bestätigt.' : n + ' eindeutige Belege wurden automatisch bestätigt.'); APP.render(); } });
     APP.pushPruefen();
     APP.ordnerLaden().then(function () { if (APP.ordner.handle && APP.ordner.recht === 'granted') APP.sichern(true); });
   }

@@ -94,9 +94,9 @@
         if (neu && (neu.zahlung === 'bar' || neu.quelle === 'scan') && neu.datum && !neu.nr && !bank) {
           var j = +neu.datum.slice(0, 4), m = +neu.datum.slice(5, 7), mo = L.monat(D, j, m);
           if ((j !== neu.jahr || m !== neu.monat) && !(mo && mo.abgeschlossen_am) && Math.abs((j * 12 + m) - (neu.jahr * 12 + neu.monat)) <= 2)
-            return APP.upd('belege', { gruppe: neu.gruppe }, { jahr: j, monat: m }).then(function () { return Object.assign(neu, { verschoben: L.MONATE[m] + ' ' + j, r: r }); });
+            return APP.upd('belege', { gruppe: neu.gruppe }, { jahr: j, monat: m }).then(function () { return APP.autoBestaetigen(function (b) { return b.gruppe === row.gruppe; }); }).then(function (n) { return Object.assign(neu, { verschoben: L.MONATE[m] + ' ' + j, r: r, auto: n > 0 }); });
         }
-        return Object.assign(neu || row, { r: r });
+        return APP.autoBestaetigen(function (b) { return b.gruppe === row.gruppe; }).then(function (n) { return Object.assign(neu || row, { r: r, auto: n > 0 }); });
       });
     }).catch(function (e) {
       if (e && (e.status === 404 || /not found|nicht eingerichtet|ANTHROPIC/i.test(e.message))) {
@@ -104,6 +104,24 @@
       } else row.leseFehler = 'Lesen hat nicht geklappt: ' + (e && e.message || e);
       return row;
     });
+  };
+
+  /* Eindeutige Belege selbst bestätigen: bekannter Lieferant, gleiche Konten wie bisher, Beträge gehen auf, keine Rückfrage.
+     Läuft nach dem Lesen und einmal nach dem Laden; der Grund steht beim Beleg. */
+  APP.autoBestaetigen = function (filter) {
+    if (!S.me || !navigator.onLine) return Promise.resolve(0);
+    var ids = {};
+    D.belege.forEach(function (b) { if (!b.bestaetigt && !b.storniert && (!filter || filter(b))) ids[b.gruppe] = 1; });
+    var liste = L.gruppen(D.belege, function (b) { return ids[b.gruppe]; }).map(function (g) { return { g: g, grund: L.autoPruefung(D, g) }; }).filter(function (x) { return x.grund; });
+    var n = 0, am = new Date().toISOString();
+    return liste.reduce(function (p, x) {
+      return p.then(function () {
+        var rows = x.g.rows.filter(function (b) { return !b.storniert && !b.bestaetigt; });
+        return rows.reduce(function (q, b) {
+          return q.then(function () { return APP.upd('belege', { id: b.id }, { bestaetigt: true, lesung: Object.assign({}, b.lesung || {}, { auto: { am: am, grund: x.grund, von: S.me.person } }) }); });
+        }, Promise.resolve()).then(function () { n++; });
+      }).catch(function () { /* nächstes Mal wieder */ });
+    }, Promise.resolve()).then(function () { return n; });
   };
 
   /* Beleg von Hand als Post ablegen (z. B. Bescheid, der als Beleg gelesen wurde) */

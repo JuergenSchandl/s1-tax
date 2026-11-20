@@ -45,6 +45,56 @@
   L.monatsEnde = function (j, m) { return j + '-' + L.p2(m) + '-' + L.p2(new Date(j, m, 0).getDate()); };
   L.monatPlus = function (j, m, n) { var t = j * 12 + (m - 1) + n; return { jahr: Math.floor(t / 12), monat: (t % 12) + 1 }; };
   L.uvaFaellig = function (j, m) { var x = L.monatPlus(j, m, 2); return x.jahr + '-' + L.p2(x.monat) + '-15'; };
+  /* ---------- eindeutige Belege selbst bestätigen ---------- */
+  var RECHTSFORM = ['gmbh', 'ag', 'kg', 'og', 'eu', 'e', 'u', 'co', 'sarl', 's', 'a', 'r', 'l', 'ltd', 'inc', 'llc', 'bv', 'nv', 'srl', 'spa', 'sa', 'limited', 'austria', 'osterreich', 'oesterreich', 'deutschland', 'germany', 'ireland', 'und'];
+  L.lieferantKey = function (s) {
+    return (String(s || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').match(/[a-z0-9]+/g) || []).filter(function (w) { return RECHTSFORM.indexOf(w) < 0; }).join('');
+  };
+  L.gleicherLieferant = function (a, b) {
+    var x = L.lieferantKey(a), y = L.lieferantKey(b);
+    if (!x || !y) return false;
+    return x === y || (x.length >= 5 && y.length >= 5 && (x.indexOf(y) === 0 || y.indexOf(x) === 0));
+  };
+  /* wie wurde dieser Lieferant bisher gebucht (bestätigt, nicht storniert, nicht privat) */
+  L.verlauf = function (D, lieferant, ohneGruppe) {
+    var paare = {}, gruppen = {};
+    D.belege.forEach(function (b) {
+      if (!b.bestaetigt || b.storniert || b.status === 'privat' || !b.konto || b.gruppe === ohneGruppe) return;
+      if (!L.gleicherLieferant(b.lieferant, lieferant)) return;
+      var p = b.konto + '|' + (b.steuerart || 'vst');
+      paare[p] = (paare[p] || 0) + 1; gruppen[b.gruppe] = 1;
+    });
+    return { paare: paare, gruppen: Object.keys(gruppen).length };
+  };
+  L.paarText = function (p, n) { var x = p.split('|'); return x[0] + ' ' + (x[1] === 'vst' ? 'mit Vorsteuer' : L.STEUERART[x[1]] || x[1]) + (n ? ', ' + n + '×' : ''); };
+  /* liefert den Grund, wenn der Beleg eindeutig ist, sonst null */
+  L.autoPruefung = function (D, g) {
+    if (!g || g.storniert || g.bestaetigt !== false || g.status === 'unklar') return null;
+    var aktiv = g.rows.filter(function (b) { return !b.storniert; });
+    if (!aktiv.length || !g.lieferant || !g.datum || g.nr) return null;
+    if (aktiv.some(function (b) { return b.anlage || b.status === 'unklar'; })) return null;
+    var ids = aktiv.map(function (b) { return b.id; });
+    if ((D.fragen || []).some(function (f) { return !f.erledigt && ids.indexOf(f.datensatz) >= 0; })) return null;
+    if (aktiv.some(function (b) { var k = b.lesung && b.lesung.ki; return k && (k.doppelt || k.frage || k.an_s1 === false); })) return null;
+    /* Datum passt zum Monat (höchstens zwei Monate daneben) */
+    var dj = +g.datum.slice(0, 4), dm = +g.datum.slice(5, 7);
+    if (Math.abs((dj * 12 + dm) - (g.jahr * 12 + g.monat)) > 2) return null;
+    var gesch = aktiv.filter(function (b) { return b.status !== 'privat'; });
+    if (!gesch.length) return null;
+    var v = L.verlauf(D, g.lieferant, g.gruppe);
+    if (!v.gruppen) return null;
+    var ok = gesch.every(function (b) {
+      var br = L.n(b.brutto), ne = L.n(b.netto), us = L.n(b.ust), art = b.steuerart || 'vst';
+      if (!b.konto || !br) return false;
+      if (Math.abs(ne + us - br) > 0.011) return false;
+      if (art === 'vst') { var satz = L.n(b.steuersatz); if ([20, 13, 10, 19, 5].indexOf(satz) < 0 || Math.abs(us - L.r2(ne * satz / 100)) > 0.021) return false; }
+      else if (us) return false;
+      return !!v.paare[b.konto + '|' + art];
+    });
+    if (!ok) return null;
+    var benutzt = {}; gesch.forEach(function (b) { benutzt[b.konto + '|' + (b.steuerart || 'vst')] = 1; });
+    return 'Lieferant und Konten wie bisher (' + Object.keys(benutzt).map(function (p) { return L.paarText(p, v.paare[p]); }).join('; ') + ')';
+  };
   L.imMonat = function (iso, j, m) { return !!iso && iso.slice(0, 7) === j + '-' + L.p2(m); };
   L.esc = function (s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   L.STOP = ['gmbh', 'und', 'der', 'die', 'das', 'austria', 'tankstelle', 'service', 'sagt', 'danke', 'www', 'com', 'ag', 'eu', 'the', 'trip', 'business', 'mastercard'];

@@ -98,7 +98,9 @@ ${Object.entries(KONTEN_HAEUFIG).map(([k, v]) => `  ${k} ${v}`).join("\n")}
     "abgabenkonto": { "stand": "JJJJ-MM-TT", "betrag": 0.00, "guthaben": true oder false } oder null }
 - frage: nur ausfüllen, wenn etwas wirklich unklar ist (z. B. keine Steuer erkennbar, Beleg unleserlich, Rechnung an jemand anderen, privat oder geschäftlich unklar). Kurze Frage an Jürgen auf Deutsch.
 
-Bisherige Zuordnungen dieses Unternehmens (Lieferant → Konto, Bezeichnung, Steuerart), bitte daran orientieren:
+Bisherige Zuordnungen dieses Unternehmens (Lieferant → Konto, Steuerart, wie oft):
+Ist der Lieferant hier aufgeführt, buche ALLE Zeilen so wie bisher (gleiches Konto, gleiche Steuerart), auch Grund-, Abo- oder Servicegebühren
+desselben Lieferanten (z. B. bei Easypark alles 7251 ohne Vorsteuer). Weiche nur ab, wenn der Beleg eindeutig etwas anderes ist, und schreib dann in "begruendung", warum.
 ${verlauf || "(noch keine)"}`;
 }
 
@@ -181,17 +183,18 @@ Deno.serve(async (req) => {
   const media = ext === "pdf" ? "application/pdf" : ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : ext === "heic" ? "image/heic" : "image/jpeg";
   if (media === "image/heic") return json({ error: "HEIC-Fotos kann die App nicht lesen. Bitte als JPG fotografieren." }, 415);
 
-  // bisherige Zuordnungen: je Lieferant die letzte bestätigte Buchung
-  const { data: alt } = await sb.from("belege").select("lieferant, konto, text, steuerart, steuersatz, datum").eq("bestaetigt", true).eq("storniert", false).neq("lieferant", "").order("datum", { ascending: false }).limit(1500);
-  const seen = new Set<string>();
-  const verlauf: string[] = [];
+  // bisherige Zuordnungen: je Lieferant, welche Konten und Steuerarten wie oft (bestätigt, nicht privat)
+  const { data: alt } = await sb.from("belege").select("lieferant, konto, text, steuerart, steuersatz, datum, status").eq("bestaetigt", true).eq("storniert", false).neq("lieferant", "").order("datum", { ascending: false }).limit(2000);
+  const proL = new Map<string, { name: string; text: string; paare: Map<string, number> }>();
   for (const a of alt || []) {
+    if (!a.konto || a.status === "privat") continue;
     const k = String(a.lieferant).toLowerCase();
-    if (seen.has(k)) continue;
-    seen.add(k);
-    verlauf.push(`${a.lieferant} → ${a.konto}, ${a.text}, ${a.steuerart}${a.steuersatz ? " " + a.steuersatz + " %" : ""}`);
-    if (verlauf.length >= 120) break;
+    let e = proL.get(k);
+    if (!e) { if (proL.size >= 150) continue; e = { name: a.lieferant, text: a.text, paare: new Map() }; proL.set(k, e); }
+    const p = `${a.konto}, ${a.steuerart}${a.steuersatz && a.steuerart !== "keine" ? " " + a.steuersatz + " %" : ""}`;
+    e.paare.set(p, (e.paare.get(p) || 0) + 1);
   }
+  const verlauf = [...proL.values()].map((e) => `${e.name} → ${[...e.paare.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([p, n]) => `${p} (${n}×)`).join("; ")} – zuletzt: ${e.text}`);
 
   const content = [
     media === "application/pdf"
