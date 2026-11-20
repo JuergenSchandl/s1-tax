@@ -288,8 +288,13 @@
       });
     });
     var g = (D.einst.steuer || {}), guthaben = L.n(g.abgabenkonto_guthaben);
-    var est = posten.filter(function (p) { return p.art === 'est'; })[0];
-    if (est && guthaben > 0) { var abz = Math.min(guthaben, est.betrag); est.hinweis = (est.hinweis ? est.hinweis + ', ' : '') + 'abzüglich Guthaben am Abgabenkonto ' + L.eur(abz); est.betrag = L.r2(est.betrag - abz); }
+    /* Guthaben am Abgabenkonto verrechnet das Finanzamt mit den nächsten fälligen Abgaben (UVA, ESt), der Reihe nach */
+    var rest = guthaben;
+    posten.filter(function (p) { return p.art === 'est' || p.art === 'uva'; }).sort(function (a, b) { return String(a.datum).localeCompare(String(b.datum)); }).forEach(function (p) {
+      if (rest <= 0 || !(p.betrag > 0)) return;
+      var abz = Math.min(rest, p.betrag); rest = L.r2(rest - abz);
+      p.hinweis = (p.hinweis ? p.hinweis + ', ' : '') + 'abzüglich Guthaben am Abgabenkonto ' + L.eur(abz); p.betrag = L.r2(p.betrag - abz);
+    });
     var summe = L.r2(posten.reduce(function (n, p) { return n + L.n(p.betrag); }, 0));
     var k = L.kontostand(D);
     return { posten: posten, summe: summe, kontostand: k, frei: L.r2(k.betrag - summe) };
