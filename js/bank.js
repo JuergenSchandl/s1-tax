@@ -69,6 +69,20 @@
       return p.then(function () { return window.N26.parseStatement(pages); });
     });
   }
+  /* Text einer PDF (für andere Unterlagen, z. B. die KESt-Aufstellung der Bank) */
+  APP.pdfText = function (file) {
+    return Promise.all([pdfLaden(), file.arrayBuffer()]).then(function (r) {
+      return r[0].getDocument({ data: new Uint8Array(r[1]) }).promise;
+    }).then(function (doc) {
+      var zeilen = [], p = Promise.resolve();
+      for (var i = 1; i <= doc.numPages; i++) (function (n) {
+        p = p.then(function () { return doc.getPage(n); }).then(function (pg) { return pg.getTextContent(); }).then(function (tc) {
+          zeilen = zeilen.concat(window.N26.linesFromItems(tc.items.map(function (it) { return { str: it.str, x: it.transform[4], y: it.transform[5], w: it.width }; })));
+        });
+      })(i);
+      return p.then(function () { return zeilen.join('\n'); });
+    });
+  };
   function einlesen(files) {
     var f = files[0];
     var istCsv = /csv/i.test(f.type) || /\.csv$/i.test(f.name);

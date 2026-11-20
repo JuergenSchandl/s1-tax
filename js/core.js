@@ -6,7 +6,7 @@
   var CFG = window.S1_CONFIG || {};
   var L = window.L;
   var APP = window.APP = {
-    VERSION: '2026.11.20f',
+    VERSION: '2026.11.20g',
     CFG: CFG,
     sb: null,
     D: { belege: [], bank: [], ausgang: [], kunden: [], monate: [], einst: {}, fragen: [], hinweise: {}, members: [] },
@@ -326,6 +326,7 @@
   };
   APP.jahrWahl = function (view, j, sep) {
     var jahre = {}; jahre[j] = 1; jahre[+L.heute().slice(0, 4)] = 1;
+    if (view === 'paket') jahre[+L.heute().slice(0, 4) - 1] = 1;
     D.belege.forEach(function (b) { jahre[b.jahr] = 1; }); D.bank.forEach(function (b) { jahre[b.jahr] = 1; });
     return '<div class="seg" role="group" aria-label="Jahr">' + Object.keys(jahre).sort().map(function (y) {
       return '<button type="button" data-go="' + view + '/' + y + (sep || '') + '" aria-pressed="' + (+y === j) + '">' + y + '</button>';

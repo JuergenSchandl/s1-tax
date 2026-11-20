@@ -162,6 +162,13 @@
       o.laeuft = true; if (!still) APP.render();
       var log = {}; try { log = JSON.parse(localStorage.getItem('s1tax:sicherung-log') || '{}'); } catch (e) { log = {}; }
       var neu = 0, jobs = [];
+      (D.einst.unterlagen || []).forEach(function (u) {
+        var ziel = 'Steuererklaerung/' + u.jahr + '/' + String(u.name || 'Unterlage').replace(/[\\/:*?"<>|]+/g, '-');
+        if (log[u.pfad] === ziel) return;
+        jobs.push(function () {
+          return APP.herunterladen('belege', u.pfad).then(function (blob) { return schreiben(o.handle, ziel, blob); }).then(function () { log[u.pfad] = ziel; neu++; });
+        });
+      });
       L.gruppen(D.belege, function (b) { return !!b.datei; }).forEach(function (g) {
         var ziel = 'Belege/' + g.jahr + '/' + L.p2(g.monat) + '/' + (g.storniert ? 'storniert_' : '') + L.dateiname(g);
         if (log[g.datei] === ziel) return;

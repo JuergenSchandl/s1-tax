@@ -148,10 +148,66 @@
         var dat = gr.filter(function (g) { return g.datei; }).length, unk = gr.filter(function (g) { return g.status === 'unklar'; }).length;
         rows += '<tr class="click" data-go="monat/' + j + '-' + m + '"><td>' + L.MONATE[m] + '</td><td class="r num">' + gr.length + '</td><td class="r num hm">' + dat + '</td><td>' + (mo && mo.abgeschlossen_am ? '<span class="chip blue">abgeschlossen</span>' : gr.length ? '<span class="chip">offen</span>' : '') + '</td><td>' + (mo && mo.geprueft_am ? '<span class="chip ' + (mo.nach_pruefung_geaendert ? 'warn' : 'ok') + '">geprüft</span>' : '') + '</td><td>' + (unk ? '<span class="chip warn">' + unk + ' unklar</span>' : '') + '</td></tr>';
       }
-      return '<div class="top"><div><h1>Jahrespaket ' + j + ' für CNC</h1><div class="s">Alles, was CNC für den Jahresabschluss braucht, in einer ZIP-Datei: 12 Monats-Excel im bisherigen Format, alle Belege, Kontoauszüge, Rechnungsnummern und die Frageliste.</div></div><div class="acts">' + APP.jahrWahl('paket', j) + '</div></div>' +
+      return '<div class="top"><div><h1>Jahrespaket ' + j + ' für CNC</h1><div class="s">Alles, was CNC für den Jahresabschluss braucht, in einer ZIP-Datei: 12 Monats-Excel im bisherigen Format, alle Belege, Kontoauszüge, Rechnungsnummern, die Frageliste und die Unterlagen für die Steuererklärung.</div></div><div class="acts">' + APP.jahrWahl('paket', j) + '</div></div>' +
         '<div class="card"><div class="chips"><button type="button" class="btn pri" data-act="paket" data-j="' + j + '" data-was="alles">Alles als ZIP</button><button type="button" class="btn" data-act="paket" data-j="' + j + '" data-was="excel">Nur die 12 Excel-Dateien</button><button type="button" class="btn" data-act="paket" data-j="' + j + '" data-was="fragen">Frageliste</button><button type="button" class="btn" data-act="rn-excel">Rechnungsnummern.xlsx</button></div><div id="paket-stand" class="s"></div></div>' +
+        unterlagenKarte(j) +
         '<div class="card flat"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Monat</th><th class="r">Belege</th><th class="r hm">mit Datei</th><th>Abschluss</th><th>Prüfung</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
     }
+  };
+  /* ---------- Unterlagen für die Steuererklärung (privat) ---------- */
+  function unterlagen(j) { return (D.einst.unterlagen || []).filter(function (u) { return u.jahr === j; }); }
+  function unterlagenKarte(j) {
+    var liste = unterlagen(j);
+    return '<div class="card"><div class="head"><h2>Unterlagen für die Steuererklärung ' + j + '</h2><button type="button" class="btn small" data-act="unterlage-neu" data-j="' + j + '">' + APP.icon('plus', 14) + ' Hinzufügen</button></div>' +
+      '<p class="s" style="margin-top:0">Private Unterlagen, die CNC für deine Einkommensteuererklärung braucht: KESt-Aufstellung der Bank zum Depot, Spendenbestätigungen, Lohnzettel und Ähnliches. Sie zählen nicht in der Buchhaltung oder Umsatzsteuer, kommen aber ins Jahrespaket (Ordner „Steuererklaerung“) und in die OneDrive-Sicherung.</p>' +
+      (liste.length ? '<div class="list">' + liste.map(function (u) {
+        var k = u.kest, info = '';
+        if (k) {
+          info = '<div class="s">KESt-Aufstellung' + (k.depot ? ' Depot ' + h(k.depot) : '') + (k.von ? ', ' + L.datum(k.von) + '–' + L.datum(k.bis) : '') + ': Gewinne und Verluste zusammen ' + L.eur(k.saldo) + ', abgeführte KESt ' + L.eur(k.kest) + '</div>' +
+            (k.ohneAusgleich && k.zuViel > 1 ? '<div class="note warn" style="margin-top:6px">Die Bank hat bei diesem Depot <b>keinen Verlustausgleich</b> gemacht. Über die Steuererklärung (Beilage E1kv, Verlustausgleich) gibt es grob geschätzt bis zu <b>' + L.eur(k.zuViel) + '</b> KESt zurück. Bitte mit CNC besprechen.</div>' : '');
+        }
+        return '<div class="item" style="padding:10px 0"><div class="grow"><span class="t">' + h(u.name) + '</span><span class="s">hinzugefügt ' + L.datum(u.am) + (u.von ? ' von ' + h(u.von) : '') + '</span>' + info + '</div>' +
+          '<div class="chips"><button type="button" class="btn small" data-act="datei-oeffnen" data-p="' + h(u.pfad) + '">Öffnen</button><button type="button" class="btn small ghost" data-act="unterlage-weg" data-id="' + h(u.id) + '">Entfernen</button></div></div>';
+      }).join('') + '</div>' : '<div class="empty">Noch keine Unterlagen für ' + j + '.</div>') + '</div>';
+  }
+  APP.A['unterlage-neu'] = function (el) {
+    var j = +el.dataset.j, inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'application/pdf,image/*'; inp.multiple = true;
+    inp.onchange = function () {
+      var files = Array.prototype.slice.call(inp.files || []);
+      if (!files.length) return;
+      APP.lauf(el, function () {
+        var neu = [];
+        return files.reduce(function (p, f) {
+          return p.then(function () {
+            var istPdf = /pdf/.test(f.type) || /\.pdf$/i.test(f.name), kest = null;
+            var vor = istPdf ? APP.pdfText(f).then(function (t) { kest = L.kestAufstellung(t); }).catch(function () { /* ohne Text auch gut */ }).then(function () { return f; })
+              : (APP.zuschneiden ? APP.zuschneiden(f).then(function (z) { return z.datei; }) : Promise.resolve(f)).then(function (d) { return APP.bildVerkleinern(d); });
+            return vor.then(function (blob) {
+              var ext = istPdf ? 'pdf' : /png/.test(blob.type) ? 'png' : 'jpg', pfad = 'unterlagen/' + j + '/' + APP.uuid() + '.' + ext;
+              return APP.hochladen('belege', pfad, blob).then(function () {
+                neu.push({ id: APP.uuid(), jahr: j, pfad: pfad, name: f.name || ('Unterlage.' + ext), am: L.heute(), von: (S.me || {}).name || null, kest: kest });
+              });
+            });
+          });
+        }, Promise.resolve()).then(function () {
+          return APP.einstellung('unterlagen', (D.einst.unterlagen || []).concat(neu));
+        }).then(function () {
+          var k = neu.filter(function (u) { return u.kest; })[0];
+          APP.toast(k && k.kest.ohneAusgleich && k.kest.zuViel > 1 ? 'KESt-Aufstellung gespeichert. Bei diesem Depot gab es keinen Verlustausgleich.' : neu.length === 1 ? 'Unterlage gespeichert.' : neu.length + ' Unterlagen gespeichert.');
+          APP.render();
+        });
+      });
+    };
+    inp.click();
+  };
+  APP.A['unterlage-weg'] = function (el) {
+    var id = el.dataset.id, u = (D.einst.unterlagen || []).find(function (x) { return x.id === id; });
+    if (!u) return;
+    APP.bestaetigen('„' + u.name + '“ aus den Unterlagen entfernen? Die Datei bleibt im Archiv.', 'Entfernen').then(function (ok) {
+      if (!ok) return;
+      return APP.einstellung('unterlagen', (D.einst.unterlagen || []).filter(function (x) { return x.id !== id; })).then(function () { APP.toast('Entfernt.'); APP.render(); });
+    }).catch(APP.fehler);
   };
   APP.A.paket = function (el) {
     var j = +el.dataset.j, was = el.dataset.was, stand = function (t) { var s = document.getElementById('paket-stand'); if (s) s.textContent = t; };
@@ -171,6 +227,13 @@
         gr.forEach(function (g) { p = p.then(function () { stand('Belege: ' + (++n) + ' von ' + total); return APP.herunterladen('belege', g.datei); }).then(function (b) { zip.file('Belege/' + L.p2(g.monat) + '/' + L.dateiname(g), b); }); });
         ar.forEach(function (a) { p = p.then(function () { stand('Dateien: ' + (++n) + ' von ' + total); return APP.herunterladen('rechnungen', a.datei); }).then(function (b) { zip.file('Ausgangsrechnungen/Re_' + String(a.nr).replace('/', '-') + '_' + a.kunde.replace(/[^\wÄÖÜäöüß.-]+/g, '-') + '.pdf', b); }); });
         az.forEach(function (x) { p = p.then(function () { stand('Dateien: ' + (++n) + ' von ' + total); return APP.herunterladen('belege', x); }).then(function (b) { zip.file('Kontoauszuege/' + x.split('/').pop(), b); }); });
+        var namen = {};
+        unterlagen(j).forEach(function (u) {
+          var nm = String(u.name || 'Unterlage').replace(/[\\/:*?"<>|]+/g, '-'), i = 1;
+          while (namen[nm]) nm = nm.replace(/(\.[a-z0-9]+)?$/i, '-' + (++i) + '$1');
+          namen[nm] = 1;
+          p = p.then(function () { stand('Unterlagen …'); return APP.herunterladen('belege', u.pfad); }).then(function (b) { zip.file('Steuererklaerung/' + nm, b); });
+        });
       }
       return p.then(function () { stand('ZIP wird gepackt …'); return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }); }).then(function (b) {
         stand(''); APP.speichernUnter(b, 'S1-Secure_' + (was === 'excel' ? 'Excel_' : 'Jahrespaket_') + j + '.zip');

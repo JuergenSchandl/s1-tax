@@ -260,6 +260,20 @@
     return { monate: letzt, bisher: rechne(erl, aus, svs, anl), jahr: rechne(erl * f, aus * f, svs * f, anl) };
   };
 
+  /* ---------- Unterlagen für die Steuererklärung (privat, nicht in der Buchhaltung) ---------- */
+  L.zahlAT = function (x) { return Number(String(x).replace(/\./g, '').replace(',', '.')); };
+  /* KESt-Kursgewinn-/-verlustaufstellung einer österreichischen Bank: Saldo, abgeführte KESt, Zeitraum */
+  L.kestAufstellung = function (text) {
+    var t = String(text || '').replace(/\s+/g, ' ');
+    var sal = t.match(/Saldo Ertr(?:ä|ae)ge\s*\/\s*Verluste\s*(-?[\d.]+,\d{2})/i), kest = t.match(/abgef(?:ü|ue)hrte KESt\s*(-?[\d.]+,\d{2})/i);
+    if (!sal || !kest) return null;
+    var iso = function (d) { return d ? d.slice(6, 10) + '-' + d.slice(3, 5) + '-' + d.slice(0, 2) : null; };
+    var zr = t.match(/(\d{2}\.\d{2}\.\d{4})\s*bis\s*(\d{2}\.\d{2}\.\d{4})/), depot = t.match(/WERTPAPIERDEPOT\s*([\d-]{6,})/i);
+    var sa = L.zahlAT(sal[1]), k = Math.abs(L.zahlAT(kest[1])), ohne = /kein automatischer KESt-Verlustausgleich/i.test(t);
+    return { saldo: sa, kest: k, von: zr ? iso(zr[1]) : null, bis: zr ? iso(zr[2]) : null, depot: depot ? depot[1] : null,
+      ohneAusgleich: ohne, zuViel: ohne ? L.r2(Math.max(0, k - 0.275 * Math.max(0, sa))) : 0 };
+  };
+
   /* ---------- Bankabgleich ---------- */
   L.verknuepft = function (D) {
     var g = {}, a = {};
