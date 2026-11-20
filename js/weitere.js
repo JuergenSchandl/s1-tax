@@ -326,7 +326,7 @@
     return '<div class="card"><div class="head"><h2>Regeln für Lieferanten</h2><button type="button" class="btn small" data-act="regel-neu">Regel hinzufügen</button></div>' +
       '<p class="s" style="margin:0 0 8px">Gelten beim Lesen jeder Rechnung dieses Lieferanten, auch für alle künftigen.</p>' +
       (r.length ? '<div class="list">' + r.map(function (x) {
-        return '<div class="item"><div class="grow"><span class="t">' + h(x.lieferant) + (x.nur ? ': nur ' + h(x.nur) + ' geschäftlich' : '') + '</span><span class="s">' + h(x.text || '') + '</span></div><button type="button" class="btn small ghost" data-act="regel-weg" data-id="' + h(x.id) + '">Entfernen</button></div>';
+        return '<div class="item"><div class="grow"><span class="t">' + h(x.lieferant) + (x.nur ? ': nur ' + h(x.nur) + ' geschäftlich' : '') + '</span><span class="s">' + (x.ab ? 'Gilt für Rechnungen ab ' + L.datum(x.ab) + '. ' : '') + h(x.text || '') + '</span></div><button type="button" class="btn small ghost" data-act="regel-weg" data-id="' + h(x.id) + '">Entfernen</button></div>';
       }).join('') + '</div>' : '<div class="empty">Noch keine Regeln.</div>') + '</div>';
   }
   APP.A['regel-neu'] = function () {
@@ -334,14 +334,17 @@
       title: 'Regel für einen Lieferanten',
       body: '<div class="grid g2" id="rg"><label class="f">Lieferant<input class="in" name="lieferant" placeholder="z. B. Spusu" autofocus></label>' +
         '<label class="f">Nur dieser Name ist geschäftlich<input class="in" name="nur" placeholder="z. B. Jürgen (leer lassen, wenn nicht nötig)"></label></div>' +
-        '<label class="f">Was soll die App beachten?<input class="in" name="text" placeholder="z. B. Andere Leitungen (Dagmar) sind privat."></label>',
+        '<label class="f">Was soll die App beachten?<input class="in" name="text" placeholder="z. B. Andere Leitungen (Dagmar) sind privat."></label>' +
+        '<label class="f">Gilt für Rechnungen ab<input class="in" name="ab" placeholder="TT.MM.JJJJ, leer = sofort" inputmode="numeric"></label>',
       foot: '<button type="button" class="btn" data-act="schliessen">Abbrechen</button><button type="button" class="btn pri" id="rg-ok">Speichern</button>'
     });
     var ok = document.getElementById('rg-ok');
     ok.onclick = function () {
       var v = APP.formDaten(document.getElementById('dlg'));
       if (!v.lieferant || !(v.nur || v.text)) { APP.toast('Bitte Lieferant und eine Regel angeben.', { bad: true }); return; }
-      var neu = { id: APP.uuid(), lieferant: v.lieferant.trim(), nur: (v.nur || '').trim() || null, text: (v.text || '').trim() || null, am: L.heute(), von: APP.ich() };
+      var ab = v.ab ? L.isoAus(v.ab) : null;
+      if (v.ab && !ab) { APP.toast('Bitte das Datum als TT.MM.JJJJ eingeben.', { bad: true }); return; }
+      var neu = { id: APP.uuid(), lieferant: v.lieferant.trim(), nur: (v.nur || '').trim() || null, text: (v.text || '').trim() || null, ab: ab, am: L.heute(), von: APP.ich() };
       APP.lauf(ok, function () { return APP.einstellung('regeln', (D.einst.regeln || []).concat([neu])).then(function () { APP.schliessen(); APP.toast('Regel gespeichert.'); APP.render(); }); });
     };
   };

@@ -41,7 +41,7 @@ function regelText(regeln: any[]) {
   if (!regeln.length) return "";
   return `
 BESONDERE REGELN je Lieferant (gehen allen anderen Regeln und den bisherigen Zuordnungen vor):
-${regeln.map((x) => `- ${x.lieferant}: ${x.nur ? `nur die Positionen von ${x.nur} sind geschäftlich; jede Position (Leitung, Person, Vertrag) als eigene Zeile, mit dem Namen im "text"; alle anderen Positionen mit "privat": true. ` : ""}${x.text || ""}`).join("\n")}
+${regeln.map((x) => `- ${x.lieferant}${x.ab ? ` (gilt nur für Rechnungen mit Datum ab ${L.datum(x.ab)}; bei älteren Rechnungen NICHT anwenden, dann alles wie bisher)` : ""}: ${x.nur ? `nur die Positionen von ${x.nur} sind geschäftlich; jede Position (Leitung, Person, Vertrag) als eigene Zeile, mit dem Namen im "text"; alle anderen Positionen mit "privat": true. ` : ""}${x.text || ""}`).join("\n")}
 `;
 }
 
@@ -272,7 +272,10 @@ Deno.serve(async (req) => {
   if (!zeilen.length) zeilen = [{ konto: null, text: String(r.text || ""), brutto: 0, ust: 0, netto: 0, steuerart: "vst", steuersatz: 20, privat: false }];
 
   // besondere Regel für diesen Lieferanten sicherstellen: nur die Zeilen mit dem Namen sind geschäftlich
-  const regel = regeln.find((x) => L.aehnlich(x.lieferant, r.lieferant || ""));
+  // eine Regel kann erst ab einem Datum gelten (z. B. ab 1.1.2027): davor alles wie bisher, nichts privat
+  const fuerLieferant = regeln.filter((x) => L.aehnlich(x.lieferant, r.lieferant || ""));
+  const regel = fuerLieferant.find((x) => !x.ab || (ISO.test(r.datum || "") && r.datum >= x.ab));
+  if (fuerLieferant.length && !regel) zeilen.forEach((z: { privat: boolean }) => { z.privat = false; });
   let regelFrage: string | null = null;
   if (regel && regel.nur) {
     const nz = (t: string) => String(t || "").toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss");
