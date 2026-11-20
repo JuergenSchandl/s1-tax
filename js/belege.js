@@ -531,8 +531,9 @@
         return Promise.all(ziel.map(function (b) {
           return APP.upd('belege', { id: b.id }, { datei: n0.datei, rechnungsnr: b.rechnungsnr || n0.rechnungsnr, lieferant_uid: b.lieferant_uid || n0.lieferant_uid, land: b.land || n0.land, volltext: n0.volltext || b.volltext, lesung: Object.assign({}, b.lesung || {}, { hash: (n0.lesung || {}).hash, angehaengt: new Date().toISOString() }) });
         })).then(function () {
-          return Promise.all(neu.map(function (b) { return APP.upd('belege', { id: b.id }, { storniert: true, notiz: 'Doppelt: Datei an ' + name + ' angehängt' }); }));
-        }).then(function () { APP.toast('Datei an ' + name + ' angehängt, der doppelte Eintrag ist storniert.'); APP.belegDialog(zg.gruppe); APP.render(); });
+          /* der doppelte Eintrag wird storniert und ausgeblendet, damit er nicht durchgestrichen in der Liste steht */
+          return Promise.all(neu.map(function (b) { return APP.upd('belege', { id: b.id }, { storniert: true, notiz: 'Doppelt: Datei an ' + name + ' angehängt', lesung: Object.assign({}, b.lesung || {}, { weg: { grund: 'doppelt', am: new Date().toISOString(), von: APP.ich() } }) }); }));
+        }).then(function () { D.belege = D.belege.filter(function (b) { return b.gruppe !== el.dataset.g; }); APP.toast('Datei an ' + name + ' angehängt, der doppelte Eintrag ist storniert.'); APP.belegDialog(zg.gruppe); APP.render(); });
       });
     }).catch(APP.fehler);
   };
