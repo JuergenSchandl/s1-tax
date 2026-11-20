@@ -269,15 +269,18 @@
   L.kandidaten = function (D, bk, alle) {
     var v = L.verknuepft(D), amt = Math.abs(L.n(bk.betrag)), out = [];
     if (bk.betrag < 0) {
-      L.gruppen(D.belege, function (b) { return !b.storniert && b.zahlung === 'bank' && b.status !== 'privat'; }).forEach(function (g) {
+      /* auch Barbelege ohne Nummer: ein Foto ist zuerst „bar“, war aber oft eine Kartenzahlung */
+      L.gruppen(D.belege, function (b) { return !b.storniert && (b.zahlung === 'bank' || (b.zahlung === 'bar' && !b.nr)) && b.status !== 'privat'; }).forEach(function (g) {
         if (v.gruppe[g.gruppe] && v.gruppe[g.gruppe].id !== bk.id) return;
         var dm = (g.jahr * 12 + g.monat) - (bk.jahr * 12 + bk.monat);
         var tage = g.datum ? Math.abs(L.tageBis(g.datum, bk.datum)) : 0;
         var gleich = Math.abs(g.brutto - amt) < 0.005, name = L.aehnlich(bk.name + ' ' + bk.info, g.lieferant + ' ' + g.text);
         var score = (gleich ? 100 : Math.abs(g.brutto - amt) < Math.max(1, amt * 0.05) ? 30 : 0) + (name ? 40 : 0) - Math.abs(dm) * 10 - Math.min(tage, 30);
+        var bar = g.zahlung === 'bar';
         if (!alle && (!gleich || Math.abs(dm) > 1 || tage > 12)) return;
+        if (!alle && bar && (!name || tage > 5)) return;
         if (alle && score < 0 && !name && !gleich) return;
-        out.push({ art: 'beleg', g: g, gleich: gleich, name: name, score: score });
+        out.push({ art: 'beleg', g: g, gleich: gleich, name: name, bar: bar, score: score - (bar ? 15 : 0) });
       });
     } else {
       D.ausgang.forEach(function (a) {
@@ -345,7 +348,7 @@
       if (top.length > 1) { var mitName = top.filter(function (k) { return k.name; }); if (mitName.length) top = mitName; }
       if (top.length === 1 || (top.length > 1 && top[0].score - top[1].score >= 10)) {
         var g = top[0].g; belegt[g.gruppe] = 1;
-        out.push({ bank: bk, patch: { art: 'beleg', beleg_gruppe: g.gruppe }, monatNeu: !g.nr && (g.jahr !== bk.jahr || g.monat !== bk.monat) ? { gruppe: g.gruppe, jahr: bk.jahr, monat: bk.monat } : null });
+        out.push({ bank: bk, patch: { art: 'beleg', beleg_gruppe: g.gruppe }, monatNeu: !g.nr && (g.jahr !== bk.jahr || g.monat !== bk.monat) ? { gruppe: g.gruppe, jahr: bk.jahr, monat: bk.monat } : null, karte: g.zahlung === 'bar' ? g.gruppe : null });
         return;
       }
       if (!c.length) { var s = L.steuerBuchung(bk); if (s) out.push({ bank: bk, neuerBeleg: s }); }

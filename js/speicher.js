@@ -82,8 +82,8 @@
         if (res.error) throw res.error;
         APP.merge('belege', res.data || []);
         var neu = res.data && res.data[0];
-        /* Barbeleg: Monat nach dem Belegdatum, solange der Monat noch offen ist */
-        if (neu && neu.zahlung === 'bar' && neu.datum && !neu.nr && !bank) {
+        /* Barbeleg oder fotografierter Kartenbeleg: Monat nach dem Belegdatum, solange der Monat noch offen ist */
+        if (neu && (neu.zahlung === 'bar' || neu.quelle === 'scan') && neu.datum && !neu.nr && !bank) {
           var j = +neu.datum.slice(0, 4), m = +neu.datum.slice(5, 7), mo = L.monat(D, j, m);
           if ((j !== neu.jahr || m !== neu.monat) && !(mo && mo.abgeschlossen_am) && Math.abs((j * 12 + m) - (neu.jahr * 12 + neu.monat)) <= 2)
             return APP.upd('belege', { gruppe: neu.gruppe }, { jahr: j, monat: m }).then(function () { return Object.assign(neu, { verschoben: L.MONATE[m] + ' ' + j, r: r }); });

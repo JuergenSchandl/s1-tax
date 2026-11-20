@@ -51,6 +51,7 @@ Antworte NUR mit einem JSON-Objekt, ohne Erklärung davor oder danach, in genau 
   "land": "ISO-Ländercode des Lieferanten, z. B. AT, DE, IE, US",
   "waehrung": "ISO-Währung des Betrags auf dem Beleg, z. B. EUR",
   "fremdbetrag": "Bruttobetrag in Fremdwährung, wenn nicht EUR, sonst null",
+  "zahlungsart": "karte, bar, ueberweisung oder null (wie bezahlt wurde)",
   "an_s1": "true, wenn die Rechnung an S1 Secure oder Jürgen Schandl geht; false, wenn an jemand anderen; null bei Kassabon ohne Empfänger",
   "zeilen": [ { "konto": 7385, "text": "Bezeichnung", "brutto": 0.00, "netto": 0.00, "ust": 0.00, "steuersatz": 20, "steuerart": "vst" } ],
   "anlage": false,
@@ -77,6 +78,11 @@ Regeln für "zeilen":
 ${Object.entries(KONTEN_HAEUFIG).map(([k, v]) => `  ${k} ${v}`).join("\n")}
 - Ein Gerät über 1.000 EUR netto ist ein Anlagegut: konto 580 (bzw. 630 beim Auto) und "anlage": true. Geräte bis 1.000 EUR netto: 680 oder das passende Aufwandskonto.
 - garantie_monate: 24 bei gekauften Geräten und Waren mit Gewährleistung, sonst null.
+- zahlungsart: "karte" bei Zahlung mit Karte oder Handy (VISA, Mastercard, Maestro, Debit, Kreditkarte, Bankomat, kontaktlos,
+  Apple Pay, Google Pay, Kartennummer mit ****, Terminal- oder Autorisierungsnummer; italienisch Carta, Bancomat, Pagamento elettronico, POS;
+  spanisch Tarjeta, Datáfono; französisch CB, Carte bancaire). "bar" bei Barzahlung (Bar, Barzahlung, gegeben, Rückgeld, Retour; Contanti,
+  Efectivo, Espèces, Cash). "ueberweisung" bei Rechnungen, die per Überweisung, SEPA-Lastschrift, Einzug oder PayPal bezahlt werden oder
+  online schon bezahlt sind. null, wenn auf dem Beleg nicht erkennbar.
 - frage: nur ausfüllen, wenn etwas wirklich unklar ist (z. B. keine Steuer erkennbar, Beleg unleserlich, Rechnung an jemand anderen, privat oder geschäftlich unklar). Kurze Frage an Jürgen auf Deutsch.
 
 Bisherige Zuordnungen dieses Unternehmens (Lieferant → Konto, Bezeichnung, Steuerart), bitte daran orientieren:
@@ -191,7 +197,12 @@ Deno.serve(async (req) => {
   let frage = r.frage ? String(r.frage) : null;
   if (r.an_s1 === false && !frage) frage = "Die Rechnung scheint nicht an S1 Secure adressiert zu sein. Geschäftlich?";
   const garantie = r.garantie_monate && r.datum ? (() => { const [y, mo, d] = String(r.datum).split("-").map(Number); const g = new Date(Date.UTC(y, mo - 1 + Number(r.garantie_monate), d)); return g.toISOString().slice(0, 10); })() : null;
+  // wie bezahlt: Karte oder Überweisung läuft über das Konto, sonst bar; nicht erkennbar = wie bisher
+  const za = String(r.zahlungsart || "").toLowerCase();
+  const { data: verbunden } = await sb.from("bank").select("id").eq("beleg_gruppe", row.gruppe).limit(1);
+  const zahlung = body.bank || (verbunden && verbunden.length) ? "bank" : za === "bar" ? "bar" : (za === "karte" || za === "ueberweisung") ? "bank" : row.zahlung;
   const gemeinsam = {
+    zahlung,
     datum: /^\d{4}-\d{2}-\d{2}$/.test(r.datum || "") ? r.datum : null,
     lieferant: String(r.lieferant || "").slice(0, 120),
     rechnungsnr: r.rechnungsnr ? String(r.rechnungsnr).slice(0, 80) : null,
@@ -212,11 +223,11 @@ Deno.serve(async (req) => {
   if (e3) return json({ error: e3.message }, 500);
   if (zeilen.length > 1) {
     const extra = zeilen.slice(1).map((z: Record<string, unknown>) => ({
-      ...gemeinsam, ...z, jahr: row.jahr, monat: row.monat, gruppe: row.gruppe, zahlung: row.zahlung, datei: row.datei, quelle: row.quelle,
+      ...gemeinsam, ...z, jahr: row.jahr, monat: row.monat, gruppe: row.gruppe, zahlung, datei: row.datei, quelle: row.quelle,
     }));
     const { error: e4 } = await sb.from("belege").insert(extra);
     if (e4) return json({ error: e4.message }, 500);
   }
   if (frage) await sb.from("fragen").insert({ tabelle: "belege", datensatz: row.id, jahr: row.jahr, monat: row.monat, text: frage, von: "app", an: "j" });
-  return json({ ok: true, zeilen: zeilen.length, brutto, doppelt, doppelt_gruppe: doppeltGruppe, frage });
+  return json({ ok: true, zeilen: zeilen.length, brutto, doppelt, doppelt_gruppe: doppeltGruppe, frage, zahlung });
 });

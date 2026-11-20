@@ -146,6 +146,8 @@
           if (x.ausgang) return APP.upd('ausgang', { id: x.ausgang.id }, { bezahlt_am: x.ausgang.bezahlt_am, bezahlt_betrag: x.ausgang.bezahlt_betrag });
         }).then(function () {
           if (x.monatNeu) return APP.upd('belege', { gruppe: x.monatNeu.gruppe }, { jahr: x.monatNeu.jahr, monat: x.monatNeu.monat });
+        }).then(function () {
+          if (x.karte) return APP.upd('belege', { gruppe: x.karte }, { zahlung: 'bank' });
         });
       });
     }, Promise.resolve()).then(function () { return n; });
@@ -170,7 +172,7 @@
     }
     if (!zugeordnet || b.art === 'beleg' || b.art === 'ausgang') {
       body += '<h3>' + (b.betrag < 0 ? 'Passende Belege' : 'Offene Ausgangsrechnungen') + '</h3>' + (kand.length ? '<div class="list card flat" style="padding:0">' + kand.map(function (k) {
-        if (k.art === 'beleg') return '<button type="button" class="item" data-act="bank-zu" data-id="' + b.id + '" data-g="' + k.g.gruppe + '"><div class="grow"><span class="t">' + h(k.g.lieferant || '(ohne Namen)') + '</span><span class="s">' + (L.belegNr(k.g) || 'neu') + ' · ' + L.MONATE[k.g.monat] + ' · ' + L.datum(k.g.datum) + ' · ' + h(k.g.text) + '</span></div><span class="amt">' + L.eur(k.g.brutto) + '</span>' + (k.gleich ? '<span class="chip ok">Betrag gleich</span>' : '') + '</button>';
+        if (k.art === 'beleg') return '<button type="button" class="item" data-act="bank-zu" data-id="' + b.id + '" data-g="' + k.g.gruppe + '"><div class="grow"><span class="t">' + h(k.g.lieferant || '(ohne Namen)') + '</span><span class="s">' + (L.belegNr(k.g) || 'neu') + ' · ' + L.MONATE[k.g.monat] + ' · ' + L.datum(k.g.datum) + ' · ' + h(k.g.text) + '</span></div><span class="amt">' + L.eur(k.g.brutto) + '</span>' + (k.gleich ? '<span class="chip ok">Betrag gleich</span>' : '') + (k.bar ? '<span class="chip yel">als bar erfasst, wird Karte</span>' : '') + '</button>';
         return '<button type="button" class="item" data-act="bank-zu" data-id="' + b.id + '" data-a="' + k.a.id + '"><div class="grow"><span class="t">Rechnung ' + h(k.a.nr) + ' · ' + h(k.a.kunde) + '</span><span class="s">vom ' + L.datum(k.a.datum) + (k.a.bezahlt_betrag !== null && !k.a.bezahlt_am ? ' · laut Liste bezahlt' : '') + '</span></div><span class="amt">' + L.eur(k.a.brutto) + '</span>' + (k.gleich ? '<span class="chip ok">Betrag gleich</span>' : '') + (k.nr ? '<span class="chip ok">Nummer im Text</span>' : '') + '</button>';
       }).join('') + '</div>' : '<div class="s">Kein passender Eintrag gefunden.</div>');
     }
@@ -194,6 +196,8 @@
       var passt = Math.abs(summe - g.brutto) < 0.005;
       return APP.upd('bank', { id: b.id }, { art: passt ? 'beleg' : 'differenz', beleg_gruppe: g.gruppe, ausgang_id: null, notiz: passt ? b.notiz : 'Konto ' + L.fmt(summe) + ' €, Beleg ' + L.fmt(g.brutto) + ' €' }).then(function () {
         if (passt) return Promise.all(andere.filter(function (x) { return x.art === 'differenz'; }).map(function (x) { return APP.upd('bank', { id: x.id }, { art: 'beleg', notiz: null }); }));
+      }).then(function () {
+        if (g.zahlung === 'bar') return APP.upd('belege', { gruppe: g.gruppe }, { zahlung: 'bank' });
       }).then(function () {
         if (!g.nr && (g.jahr !== b.jahr || g.monat !== b.monat)) return APP.upd('belege', { gruppe: g.gruppe }, { jahr: b.jahr, monat: b.monat }).then(function () { APP.toast('Beleg in den Monat der Zahlung verschoben (' + L.MONATE[b.monat] + ').'); });
       }).then(function () { APP.schliessen(); APP.toast('Zugeordnet.'); });
