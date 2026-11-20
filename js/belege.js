@@ -52,7 +52,7 @@
       return '<tr class="' + cls.join(' ') + '" data-act="beleg" data-g="' + g.gruppe + '">' +
         '<td class="num">' + (L.belegNr(g) || '<span class="mut">neu</span>') + (opt.monat ? '<div class="s">' + L.MON[g.monat] + '</div>' : '') + '</td>' +
         '<td class="num hm">' + L.datumKurz(g.datum) + '</td>' +
-        '<td><b>' + h(g.lieferant || '(noch nicht gelesen)') + '</b><div class="s">' + h(g.text || '') + '</div></td>' +
+        '<td><b>' + h(g.lieferant || '(noch nicht gelesen)') + '</b><div class="s">' + h(g.storniert && g.notiz ? g.notiz : (g.text || '')) + '</div></td>' +
         '<td class="hm">' + h(konto) + '</td>' +
         '<td class="r num">' + L.fmt(g.brutto) + '</td>' +
         '<td class="r num hm">' + L.fmt(g.netto) + '</td>' +
@@ -372,17 +372,37 @@
     });
     });
   };
+  /* Stornieren nur mit Grund; der Grund steht in der Notiz und im Protokoll */
+  var STORNO_GRUENDE = ['Test', 'Doppelt erfasst', 'Falsch erfasst', 'Gehört nicht zu S1 Secure', 'Gutschrift / Rückerstattung'];
+  function stornoNotiz(alt) { return String(alt || '').replace(/^Storniert: [^·]*(· )?/, '').trim(); }
   APP.A['beleg-storno'] = function (el) {
     var zur = !!el.dataset.zurueck, g = el.dataset.g;
-    (zur ? Promise.resolve(true) : APP.bestaetigen('Der Beleg zählt dann nirgends mehr mit. Die Datei und alle Angaben bleiben erhalten, du kannst ihn jederzeit wiederherstellen.', 'Stornieren', { danger: true })).then(function (ok) {
-      if (!ok) return;
-      var rows = D.belege.filter(function (b) { return b.gruppe === g; });
+    var rows = D.belege.filter(function (b) { return b.gruppe === g; });
+    function ausfuehren(grund) {
       var ziel = zur ? rows : rows.filter(function (b) { return !b.storniert; });
-      return Promise.all(ziel.map(function (b) { return APP.upd('belege', { id: b.id }, { storniert: !zur }); })).then(function () {
+      return Promise.all(ziel.map(function (b) {
+        var rest = stornoNotiz(b.notiz);
+        return APP.upd('belege', { id: b.id }, { storniert: !zur, notiz: zur ? (rest || null) : 'Storniert: ' + grund + (rest ? ' · ' + rest : '') });
+      })).then(function () {
         var bk = D.bank.find(function (b) { return b.beleg_gruppe === g; });
         if (!zur && bk) return APP.upd('bank', { id: bk.id }, { art: 'offen', beleg_gruppe: null });
-      }).then(function () { APP.schliessen(); APP.toast(zur ? 'Wiederhergestellt.' : 'Storniert.'); APP.render(); });
-    }).catch(APP.fehler);
+      }).then(function () { APP.schliessen(); APP.toast(zur ? 'Wiederhergestellt.' : 'Storniert: ' + grund); APP.render(); });
+    }
+    if (zur) { ausfuehren('').catch(APP.fehler); return; }
+    APP.modal({
+      title: 'Beleg stornieren',
+      body: '<p style="margin:0">Der Beleg zählt dann nirgends mehr mit. Die Datei und alle Angaben bleiben erhalten, du kannst ihn jederzeit wiederherstellen.</p>' +
+        '<div class="chips">' + STORNO_GRUENDE.map(function (x) { return '<button type="button" class="chip" data-grund="' + h(x) + '">' + h(x) + '</button>'; }).join('') + '</div>' +
+        '<label class="f">Grund<input class="in" id="storno-grund" placeholder="z. B. Test, doppelt, falscher Monat" autofocus></label>',
+      foot: '<button type="button" class="btn" data-act="schliessen">Abbrechen</button><button type="button" class="btn danger" id="storno-ok">Stornieren</button>'
+    });
+    APP.$$('#dlg [data-grund]').forEach(function (b) { b.onclick = function () { document.getElementById('storno-grund').value = b.dataset.grund; APP.$$('#dlg [data-grund]').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); }); }; });
+    var okb = document.getElementById('storno-ok');
+    okb.onclick = function () {
+      var grund = document.getElementById('storno-grund').value.trim();
+      if (!grund) { APP.toast('Bitte einen Grund angeben.', { bad: true }); return; }
+      APP.lauf(okb, function () { return ausfuehren(grund); });
+    };
   };
   APP.A['beleg-lesen'] = function (el) {
     var g = el.dataset.g, row = D.belege.find(function (b) { return b.gruppe === g && !b.storniert; }) || D.belege.find(function (b) { return b.gruppe === g; });

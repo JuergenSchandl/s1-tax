@@ -187,17 +187,17 @@
       }
       out.push({ datum: u.faellig, art: 'uva', titel: 'UVA ' + L.MONATE[x.monat] + ' ' + x.jahr, betrag: u.gemeldetBetrag !== null ? u.gemeldetBetrag : u.zahllast, erledigt: u.erledigt, jahr: x.jahr, monat: x.monat, zahlung: u.zahlung });
     }
-    var vzq = L.n(st.est_vz_quartal);
+    var vzq = L.n(st.est_vz_quartal), man = D.einst.termine_erledigt || {};
     L.ESTQ.forEach(function (q) {
       var iso = jahr + '-' + L.p2(q[0]) + '-' + L.p2(q[1]);
-      var z = L.bankNahe(D, iso, /finanzamt.*\bE\b/i, 25, 30);
-      out.push({ datum: iso, art: 'est', titel: 'Einkommensteuer-Vorauszahlung', betrag: vzq, erledigt: !!z, zahlung: z });
+      var z = L.bankNahe(D, iso, /finanzamt.*\bE\b/i, 25, 30), m = man['est|' + iso];
+      out.push({ datum: iso, art: 'est', key: 'est|' + iso, titel: 'Einkommensteuer-Vorauszahlung', betrag: vzq, erledigt: !!z || !!m, zahlung: z, manuell: m || null });
     });
     var sq = L.n(st.svs_quartal);
     L.SVSQ.forEach(function (q) {
       var iso = jahr + '-' + L.p2(q[0]) + '-' + L.p2(q[1]);
-      var z = L.bankNahe(D, iso, /sozialversicherung|\bsvs\b/i, 25, 30);
-      out.push({ datum: iso, art: 'svs', titel: 'SVS-Beiträge', betrag: sq, erledigt: !!z, zahlung: z });
+      var z = L.bankNahe(D, iso, /sozialversicherung|\bsvs\b/i, 25, 30), m = man['svs|' + iso];
+      out.push({ datum: iso, art: 'svs', key: 'svs|' + iso, titel: 'SVS-Beiträge', betrag: sq, erledigt: !!z || !!m, zahlung: z, manuell: m || null });
     });
     out.sort(function (a, b) { return a.datum.localeCompare(b.datum); });
     return out.filter(function (t) { return t.datum.slice(0, 4) === String(jahr); });

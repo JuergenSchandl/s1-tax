@@ -112,7 +112,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl tr.click:hover td { background: #F8F9F6; }
 .tbl tr.neu td { background: #FFFBEA; }
 .tbl tr.privat td { color: #8A8E96; }
-.tbl tr.storno td { color: #A3A6AD; text-decoration: line-through; }
+.tbl tr.storno td { color: #A3A6AD; }
+.tbl tr.storno td b, .tbl tr.storno td.r { text-decoration: line-through; }
 .tbl tr.sum td { font-weight: 700; border-bottom: 0; }
 .tbl td.r, .tbl th.r { text-align: right; }
 .list { display: flex; flex-direction: column; }

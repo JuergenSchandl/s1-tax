@@ -103,10 +103,10 @@
       var tRows = termine.map(function (t) {
         var d = L.tageBis(t.datum), status;
         if (t.offenNoch) status = '<span class="chip">Monat läuft</span>';
-        else if (t.erledigt) status = '<span class="chip ok">' + (t.zahlung ? 'bezahlt ' + L.datumKurz(t.zahlung.datum) : 'erledigt') + '</span>';
+        else if (t.erledigt) status = '<span class="chip ok">' + (t.zahlung ? 'bezahlt ' + L.datumKurz(t.zahlung.datum) : t.manuell ? 'erledigt ' + L.datumKurz(t.manuell.am) + (t.manuell.notiz ? ' · ' + h(t.manuell.notiz) : '') : 'erledigt') + '</span>';
         else if (t.betrag !== null && t.betrag <= 0) status = '<span class="chip blue">Gutschrift</span>';
         else status = d < 0 ? '<span class="chip bad">seit ' + (-d) + ' Tagen fällig</span>' : d <= 14 ? '<span class="chip warn">in ' + d + ' Tagen</span>' : '<span class="chip">offen</span>';
-        return '<tr' + (t.art === 'uva' ? ' class="click" data-go="uva/' + t.jahr + '-' + t.monat + '"' : '') + '><td class="num">' + L.datum(t.datum) + '</td><td>' + h(t.titel) + '</td><td class="r num">' + (t.betrag === null ? '–' : L.fmt(t.betrag)) + '</td><td>' + status + '</td></tr>';
+        return '<tr class="click" ' + (t.art === 'uva' ? 'data-go="uva/' + t.jahr + '-' + t.monat + '"' : 'data-act="termin" data-key="' + t.key + '" data-j="' + j + '"') + '><td class="num">' + L.datum(t.datum) + '</td><td>' + h(t.titel) + '</td><td class="r num">' + (t.betrag === null ? '–' : L.fmt(t.betrag)) + '</td><td>' + status + '</td></tr>';
       }).join('');
       var v = L.vorschau(D, j), b = v.bisher, y = v.jahr;
       var zeile = function (k, a, c, fett) { return '<tr' + (fett ? ' class="sum"' : '') + '><td>' + k + '</td><td class="r num">' + L.fmt(a) + '</td><td class="r num">' + L.fmt(c) + '</td></tr>'; };
@@ -125,6 +125,45 @@
         zeile('Einkommensteuer', b.est, y.est) + zeile('Vorauszahlungen', -b.vz, -y.vz) + zeile('Differenz', b.differenz, y.differenz, true) + '</tbody></table></div>' +
         '<p class="s" style="margin:0">Schätzung mit dem Tarif ' + (L.TARIF[j] ? j : 'des letzten bekannten Jahres') + '. „Aufs Jahr“ rechnet den Monatsschnitt hoch. Ohne Taggelder, Privatanteile, Kürzungen bei Bewirtung und Abgrenzungen; das macht CNC.</p></div></div></div>';
     }
+  };
+  /* Steuertermin (ESt-Vorauszahlung, SVS) von Hand als erledigt eintragen, z. B. wenn der Kontoauszug noch fehlt */
+  APP.A.termin = function (el) {
+    var t = L.termine(D, +el.dataset.j).find(function (x) { return x.key === el.dataset.key; });
+    if (!t) return;
+    var st = D.einst.steuer || {}, gh = L.n(st.abgabenkonto_guthaben), m = t.manuell || {};
+    var vorschlag = t.art === 'est' && gh > 0 ? Math.max(0, t.betrag - gh) : t.betrag;
+    var body = '<p style="margin:0">' + h(t.titel) + ', fällig am <b>' + L.datum(t.datum) + '</b>, laut Bescheid ' + L.eur(t.betrag) + '.</p>' +
+      (t.zahlung ? '<div class="note ok">Im Kontoauszug gefunden: ' + L.datum(t.zahlung.datum) + ' · ' + h(t.zahlung.name) + ' · ' + L.eur(t.zahlung.betrag) + '. Hier ist nichts zu tun.</div>' :
+        '<p class="s" style="margin:0">Normalerweise erkennt die App die Zahlung im Kontoauszug. Fehlt der Auszug noch oder wurde mit einem Guthaben verrechnet, trägst du es hier ein.</p>' +
+        '<div class="grid"><label class="f">Erledigt am<input class="in" id="te-am" value="' + h(L.datum(m.am || L.heute())) + '" placeholder="TT.MM.JJJJ"></label><label class="f">Bezahlt €<input class="in" id="te-betrag" inputmode="decimal" value="' + L.fmt(m.betrag !== undefined ? m.betrag : vorschlag) + '"></label></div>' +
+        '<label class="f">Notiz<input class="in" id="te-notiz" value="' + h(m.notiz || '') + '" placeholder="z. B. überwiesen, mit Guthaben verrechnet"></label>' +
+        (t.art === 'est' && gh > 0 && !m.am ? '<label class="f" style="flex-direction:row;gap:8px;align-items:center;font-weight:500"><input type="checkbox" id="te-guthaben" checked> Guthaben am Abgabenkonto (' + L.eur(gh) + ') wurde dafür verrechnet</label>' : ''));
+    APP.modal({
+      title: t.titel + ' ' + L.datum(t.datum), body: body,
+      foot: (t.zahlung ? '' : (m.am ? '<div class="left"><button type="button" class="btn danger" id="te-weg">Zurücknehmen</button></div>' : '') + '<button type="button" class="btn" data-act="schliessen">Abbrechen</button><button type="button" class="btn pri" id="te-ok">Als erledigt speichern</button>') || '<button type="button" class="btn pri" data-act="schliessen">Schließen</button>'
+    });
+    var ok = document.getElementById('te-ok');
+    if (ok) ok.onclick = function () {
+      var am = L.isoAus(document.getElementById('te-am').value), betrag = L.parse(document.getElementById('te-betrag').value);
+      if (!am || !isFinite(betrag)) { APP.toast('Bitte Datum und Betrag prüfen.', { bad: true }); return; }
+      var alle = Object.assign({}, D.einst.termine_erledigt || {});
+      var cb = document.getElementById('te-guthaben'), verrechnet = cb && cb.checked ? Math.min(gh, t.betrag) : 0;
+      alle[t.key] = { am: am, betrag: L.r2(betrag), notiz: document.getElementById('te-notiz').value.trim() || (verrechnet ? 'mit Guthaben verrechnet' : ''), von: APP.ich(), guthaben: verrechnet || undefined };
+      APP.lauf(ok, function () {
+        return APP.einstellung('termine_erledigt', alle).then(function () {
+          if (verrechnet) { var neu = Object.assign({}, st, { abgabenkonto_guthaben: L.r2(gh - verrechnet), abgabenkonto_stand: am }); return APP.einstellung('steuer', neu); }
+        }).then(function () { APP.schliessen(); APP.toast('Als erledigt eingetragen.'); APP.render(); });
+      });
+    };
+    var weg = document.getElementById('te-weg');
+    if (weg) weg.onclick = function () {
+      var alle = Object.assign({}, D.einst.termine_erledigt || {}), alt = alle[t.key]; delete alle[t.key];
+      APP.lauf(weg, function () {
+        return APP.einstellung('termine_erledigt', alle).then(function () {
+          if (alt && alt.guthaben) { var neu = Object.assign({}, st, { abgabenkonto_guthaben: L.r2(gh + alt.guthaben) }); return APP.einstellung('steuer', neu); }
+        }).then(function () { APP.schliessen(); APP.toast('Zurückgenommen.'); APP.render(); });
+      });
+    };
   };
   APP.A['steuer-werte'] = function () {
     var st = D.einst.steuer || {}, f = function (k, l, hint) { return '<label class="f">' + l + '<input class="in" name="' + k + '" value="' + h(st[k] === undefined || st[k] === null ? '' : (typeof st[k] === 'number' ? L.fmt(st[k]) : st[k])) + '">' + (hint ? '<span class="hint">' + hint + '</span>' : '') + '</label>'; };
