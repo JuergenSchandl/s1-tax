@@ -265,7 +265,7 @@
   APP.passkeyMoeglich = function () { return !!(window.PublicKeyCredential && APP.sb && APP.sb.auth && APP.sb.auth.signInWithPasskey); };
   APP.passkeyFehler = function (e) {
     var c = e && (e.code || e.name) || '', m = e && e.message || String(e);
-    if (/passkey_disabled/.test(c + m)) return 'Passkeys sind in Supabase noch nicht eingeschaltet (Authentication → Passkeys).';
+    if (/passkey_disabled|passkeys? (are|is) (disabled|not enabled)/i.test(c + ' ' + m)) return 'Passkeys sind in Supabase noch nicht eingeschaltet (Authentication → Passkeys).';
     if (/NotAllowedError|cancel/i.test(c + m)) return 'Abgebrochen.';
     if (/credential_exists/.test(c + m)) return 'Dieses Gerät ist schon eingerichtet.';
     if (/credential_not_found/.test(c + m)) return 'Für dieses Gerät ist kein Passkey hinterlegt. Bitte einmal mit Passwort anmelden und in den Einstellungen einrichten.';

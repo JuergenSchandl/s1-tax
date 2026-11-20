@@ -218,3 +218,7 @@ img.vorschau-datei { object-fit: contain; }
   .drop .ic, .drop .grow { display: none; }
   .tbl td b { font-weight: 600; }
 }
+@media (max-width: 860px) {
+  .btn { white-space: normal; text-align: center; line-height: 1.25; padding-top: 6px; padding-bottom: 6px; }
+  #toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
+}
