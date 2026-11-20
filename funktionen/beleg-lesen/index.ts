@@ -54,6 +54,7 @@ Antworte NUR mit einem JSON-Objekt, ohne Erklärung davor oder danach, in genau 
   "zahlungsart": "karte, bar, ueberweisung oder null (wie bezahlt wurde)",
   "dokumentart": "beleg oder behoerde",
   "behoerde": null,
+  "empfaenger": "an wen die Rechnung adressiert ist (Firma oder Name, wie auf dem Beleg), null bei Kassabon ohne Empfänger",
   "an_s1": "true, wenn die Rechnung an S1 Secure oder Jürgen Schandl geht; false, wenn an jemand anderen; null bei Kassabon ohne Empfänger",
   "zeilen": [ { "konto": 7385, "text": "Bezeichnung", "brutto": 0.00, "netto": 0.00, "ust": 0.00, "steuersatz": 20, "steuerart": "vst" } ],
   "anlage": false,
@@ -96,6 +97,8 @@ ${Object.entries(KONTEN_HAEUFIG).map(([k, v]) => `  ${k} ${v}`).join("\n")}
     "naechste_zahlung": { "betrag": 0.00, "faellig": "JJJJ-MM-TT", "was": "kurz" } oder null,
     "svs_quartalsbetrag": Beitrag je Quartal laut SVS oder null,
     "abgabenkonto": { "stand": "JJJJ-MM-TT", "betrag": 0.00, "guthaben": true oder false } oder null }
+- an_s1: true bei S1 Secure, S1 Secure e.U., S1Secure oder Jürgen (Erich) Schandl als Empfänger. false bei jeder anderen Firma oder Person
+  als Empfänger, auch an derselben Adresse (z. B. Shootformance GmbH, Dagmar Schandl, ein Kunde). Dann in "empfaenger" genau diesen Namen.
 - frage: nur ausfüllen, wenn etwas wirklich unklar ist (z. B. keine Steuer erkennbar, Beleg unleserlich, Rechnung an jemand anderen, privat oder geschäftlich unklar). Kurze Frage an Jürgen auf Deutsch.
 
 Bisherige Zuordnungen dieses Unternehmens (Lieferant → Konto, Steuerart, wie oft):
@@ -268,7 +271,8 @@ Deno.serve(async (req) => {
   const doppeltGruppe = treffer ? treffer.gruppe : null;
 
   let frage = r.frage ? String(r.frage) : null;
-  if (r.an_s1 === false && !frage) frage = "Die Rechnung scheint nicht an S1 Secure adressiert zu sein. Geschäftlich?";
+  const fremd = r.an_s1 === false ? String(r.empfaenger || "jemand anderen").slice(0, 120) : null;
+  if (fremd) frage = `Die Rechnung geht an ${fremd}, nicht an S1 Secure. Falsch hineingezogen?`;
   const garantie = r.garantie_monate && r.datum ? (() => { const [y, mo, d] = String(r.datum).split("-").map(Number); const g = new Date(Date.UTC(y, mo - 1 + Number(r.garantie_monate), d)); return g.toISOString().slice(0, 10); })() : null;
   // wie bezahlt: Karte oder Überweisung läuft über das Konto, sonst bar; nicht erkennbar = wie bisher
   const za = String(r.zahlungsart || "").toLowerCase();
@@ -302,5 +306,5 @@ Deno.serve(async (req) => {
     if (e4) return json({ error: e4.message }, 500);
   }
   if (frage) await sb.from("fragen").insert({ tabelle: "belege", datensatz: row.id, jahr: row.jahr, monat: row.monat, text: frage, von: "app", an: "j" });
-  return json({ ok: true, zeilen: zeilen.length, brutto, doppelt, doppelt_gruppe: doppeltGruppe, frage, zahlung });
+  return json({ ok: true, zeilen: zeilen.length, brutto, doppelt, doppelt_gruppe: doppeltGruppe, frage, zahlung, fremd });
 });

@@ -117,7 +117,9 @@
   L.aktiv = function (b) { return !b.storniert; };
   /* zählt in UVA, Excel und Summen: nicht storniert, nicht privat, kein ungeklärtes Doppel */
   L.doppelVerdacht = function (b) { return b.bestaetigt === false && !!(b.lesung && b.lesung.ki && b.lesung.ki.doppelt_gruppe); };
-  L.zaehlt = function (b) { return !b.storniert && b.status !== 'privat' && !L.doppelVerdacht(b); };
+  /* Rechnung an jemand anderen (z. B. falsch hineingezogen): zählt erst, wenn sie bestätigt oder als S1 Secure markiert ist */
+  L.fremdVerdacht = function (b) { var l = b.lesung; return b.bestaetigt === false && !!(l && l.ki && l.ki.an_s1 === false && !l.an_s1_ok); };
+  L.zaehlt = function (b) { return !b.storniert && b.status !== 'privat' && !L.doppelVerdacht(b) && !L.fremdVerdacht(b); };
   L.belegNr = function (b) { return b && b.nr ? b.nr + '/' + String(b.jahr).slice(2) : ''; };
   L.gruppen = function (belege, filter) {
     var map = {}, out = [];

@@ -144,6 +144,7 @@
           if (r.leseFehler) { u.status = 'fehler'; u.text = r.leseFehler.length > 60 ? 'selbst ausfüllen' : r.leseFehler; return r; }
           u.status = 'fertig'; u.text = (r.lieferant || 'gelesen') + ' · ' + L.eur(r.brutto) + (r.verschoben ? ' · nach ' + r.verschoben : '') + (r.auto ? ' · bestätigt' : '');
           if (r.r && r.r.doppelt) { u.status = 'fehler'; u.text = 'gibt es vermutlich schon: ' + r.r.doppelt; }
+          if (r.r && r.r.fremd) { u.status = 'fehler'; u.text = 'geht an ' + r.r.fremd + ', nicht an S1 Secure'; APP.toast('Diese Rechnung geht an ' + r.r.fremd + ', nicht an S1 Secure. Sie zählt vorerst nicht mit.', { bad: true }); }
           return r;
         }).catch(function (e) { u.status = 'fehler'; u.text = e && e.message || String(e); });
       });
@@ -246,15 +247,17 @@
     if (!l || !l.ki) return autoNote + bisher;
     var k = l.ki, t = [];
     if (k.begruendung) t.push(h(k.begruendung));
-    if (k.an_s1 === false) t.push('<b>Achtung:</b> Die Rechnung scheint nicht an S1 Secure zu gehen.');
-    if (k.frage) t.push('<b>Frage der App:</b> ' + h(k.frage));
+    var fremd = k.an_s1 === false && !g.storniert && !l.an_s1_ok && g.bestaetigt === false;
+    if (k.frage && !fremd) t.push('<b>Frage der App:</b> ' + h(k.frage));
+    var fremdNote = fremd ? '<div class="note warn"><b>Diese Rechnung geht an ' + h(k.empfaenger || 'jemand anderen') + ', nicht an S1 Secure oder Jürgen Schandl.</b> Sie zählt deshalb vorerst nirgends mit.' +
+      '<div class="chips" style="margin-top:8px"><button type="button" class="btn small danger" data-act="fremd-weg" data-g="' + g.gruppe + '">Falsch hineingezogen, entfernen</button><button type="button" class="btn small" data-act="fremd-ok" data-g="' + g.gruppe + '">Gehört doch zu S1 Secure</button></div></div>' : '';
     var dg = k.doppelt_gruppe && L.gruppen(D.belege, function (b) { return b.gruppe === k.doppelt_gruppe; })[0];
     var doppel = '';
     if (k.doppelt && g.bestaetigt === false && !g.storniert) {
       doppel = '<div class="note warn"><b>Diesen Beleg gibt es vermutlich schon:</b> ' + h(k.doppelt) + '. Er zählt deshalb vorerst nirgends mit.' +
         (dg ? '<div class="chips" style="margin-top:8px"><button type="button" class="btn small pri" data-act="doppelt-anhaengen" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Datei an ' + (L.belegNr(dg) ? 'Beleg ' + L.belegNr(dg) : 'den bestehenden Beleg') + ' hängen</button><button type="button" class="btn small" data-act="beleg" data-g="' + dg.gruppe + '">Bestehenden Beleg ansehen</button><button type="button" class="btn small ghost" data-act="doppelt-nein" data-g="' + g.gruppe + '">Ist kein Doppel</button></div>' : '') + '</div>';
     }
-    return autoNote + (t.length ? '<div class="note blue"><b>Von der App gelesen.</b> ' + t.join(' ') + '</div>' : '') + bisher + doppel;
+    return autoNote + fremdNote + (t.length ? '<div class="note blue"><b>Von der App gelesen.</b> ' + t.join(' ') + '</div>' : '') + bisher + doppel;
   }
   function fragenBlock(tabelle, ids) {
     var fr = D.fragen.filter(function (f) { return f.tabelle === tabelle && ids.indexOf(f.datensatz) >= 0; });
@@ -443,6 +446,35 @@
       return APP.belegLesen(row).then(function (r) {
         if (r.abgelegt) { APP.schliessen(); APP.toast(postText(r.r)); APP.render(); return; }
         if (r.leseFehler) APP.toast(r.leseFehler, { bad: true }); else APP.toast('Neu gelesen.'); APP.belegDialog(g); APP.render();
+      });
+    });
+  };
+  /* Rechnung an jemand anderen: entfernen (storniert und ausgeblendet) oder doch für S1 Secure */
+  function fremdFragenErledigen(rows, antwort) {
+    var ids = rows.map(function (b) { return b.id; });
+    var offen = D.fragen.filter(function (f) { return !f.erledigt && ids.indexOf(f.datensatz) >= 0; });
+    return Promise.all(offen.map(function (f) { return APP.upd('fragen', { id: f.id }, { erledigt: true, antwort: antwort, antwort_von: APP.ich(), antwort_am: new Date().toISOString() }); }));
+  }
+  APP.A['fremd-weg'] = function (el) {
+    var g = el.dataset.g, rows = D.belege.filter(function (b) { return b.gruppe === g && !b.storniert; });
+    var k = (rows[0] && rows[0].lesung && rows[0].lesung.ki) || {}, an = k.empfaenger || 'jemand anderen';
+    APP.lauf(el, function () {
+      return Promise.all(rows.map(function (b) {
+        return APP.upd('belege', { id: b.id }, { storniert: true, notiz: 'Storniert: Gehört nicht zu S1 Secure (an ' + an + ')', lesung: Object.assign({}, b.lesung || {}, { weg: { grund: 'nicht an S1 Secure', am: new Date().toISOString(), von: APP.ich() } }) });
+      })).then(function () { return fremdFragenErledigen(rows, 'Falsch hineingezogen, entfernt.'); }).then(function () {
+        D.belege = D.belege.filter(function (b) { return b.gruppe !== g; });
+        S.uploads.forEach(function (u) { if (u.gruppe === g) { u.gruppe = null; u.status = 'fertig'; u.text = 'entfernt (nicht an S1 Secure)'; } });
+        APP.schliessen(); APP.toast('Entfernt. Die Rechnung an ' + an + ' zählt nirgends mit.'); APP.render();
+      });
+    });
+  };
+  APP.A['fremd-ok'] = function (el) {
+    var g = el.dataset.g, rows = D.belege.filter(function (b) { return b.gruppe === g && !b.storniert; });
+    APP.lauf(el, function () {
+      return Promise.all(rows.map(function (b) {
+        return APP.upd('belege', { id: b.id }, Object.assign({ lesung: Object.assign({}, b.lesung || {}, { an_s1_ok: { am: new Date().toISOString(), von: APP.ich() } }) }, b.status === 'unklar' ? { status: 'geschaeftlich' } : {}));
+      })).then(function () { return fremdFragenErledigen(rows, 'Gehört zu S1 Secure.'); }).then(function () {
+        APP.toast('Passt. Bitte noch prüfen und bestätigen.'); APP.belegDialog(g); APP.render();
       });
     });
   };

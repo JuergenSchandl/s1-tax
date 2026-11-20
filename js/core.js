@@ -6,7 +6,7 @@
   var CFG = window.S1_CONFIG || {};
   var L = window.L;
   var APP = window.APP = {
-    VERSION: '2026.11.20q',
+    VERSION: '2026.11.20r',
     CFG: CFG,
     sb: null,
     D: { belege: [], bank: [], ausgang: [], kunden: [], monate: [], einst: {}, fragen: [], hinweise: {}, members: [] },
@@ -115,8 +115,8 @@
     ['netto', 'ust', 'brutto', 'steuersatz', 'betrag', 'bezahlt_betrag', 'uva_zahllast', 'uva_bezahlt'].forEach(function (k) { if (r[k] !== null && r[k] !== undefined && typeof r[k] === 'string') r[k] = Number(r[k]); });
     return r;
   }
-  /* als Post vom Amt abgelegt: bleibt storniert in der Datenbank, die App zeigt ihn nicht */
-  APP.istPost = function (b) { return !!(b && b.storniert && b.lesung && b.lesung.post); };
+  /* als Post vom Amt abgelegt oder falsch hineingezogen: bleibt storniert in der Datenbank, die App zeigt ihn nicht */
+  APP.istPost = function (b) { return !!(b && b.storniert && b.lesung && (b.lesung.post || b.lesung.weg)); };
   function merge(table, rows) {
     if (table === 'belege') { var weg = rows.filter(APP.istPost); if (weg.length) { D.belege = D.belege.filter(function (x) { return !weg.some(function (w) { return w.id === x.id; }); }); rows = rows.filter(function (r) { return !APP.istPost(r); }); } }
     if (table === 'einstellungen') { rows.forEach(function (r) { D.einst[r.key] = r.value; }); return; }
