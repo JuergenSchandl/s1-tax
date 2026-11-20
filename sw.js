@@ -2,7 +2,7 @@
    Hält die App startfähig, wenn kein Netz da ist, und zeigt Erinnerungen an.
    Online wird immer zuerst die neueste Version geladen, damit Änderungen sofort ankommen.
    Daten aus der Datenbank werden hier nie gespeichert. */
-const CACHE = 's1tax-v1';
+const CACHE = 's1tax-v2';
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', (e) => {
@@ -22,8 +22,10 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const shell = url.origin === location.origin || url.hostname === 'cdn.jsdelivr.net' || url.hostname.startsWith('fonts.');
   if (!shell) return;
+  /* eigene Dateien immer beim Server nachfragen (kein veralteter Zwischenspeicher), ohne Netz aus dem Cache */
+  const frisch = url.origin === location.origin ? new Request(req, { cache: 'no-cache' }) : req;
   e.respondWith(
-    fetch(req).then((res) => {
+    fetch(frisch).then((res) => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {}); }
       return res;
     }).catch(() => caches.match(req, { ignoreSearch: true }).then((hit) => hit || caches.match('./')))

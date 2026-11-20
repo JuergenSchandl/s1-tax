@@ -6,7 +6,7 @@
   var CFG = window.S1_CONFIG || {};
   var L = window.L;
   var APP = window.APP = {
-    VERSION: '2026.11.20',
+    VERSION: '2026.11.20b',
     CFG: CFG,
     sb: null,
     D: { belege: [], bank: [], ausgang: [], kunden: [], monate: [], einst: {}, fragen: [], hinweise: {}, members: [] },
