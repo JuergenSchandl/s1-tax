@@ -245,28 +245,37 @@
     for (var i = 0; i < t.length; i++) { var oben = t[i][0]; if (einkommen > unten) st += (Math.min(einkommen, oben) - unten) * t[i][1]; unten = oben; }
     return L.r2(Math.max(0, st));
   };
+  /* PKW-Kosten für den Privatanteil: Konten 7250–7259 und die PKW-Versicherung */
+  L.pkwKosten = function (b) {
+    var k = Number(b.konto);
+    return (k >= 7250 && k <= 7259) || (k === 7700 && /\b(pkw|kfz|auto)/i.test(String(b.text || '') + ' ' + String(b.lieferant || '')));
+  };
   L.vorschau = function (D, jahr) {
-    var erl = 0, aus = 0, svs = 0, anl = 0, letzt = 0;
-    D.ausgang.forEach(function (a) { if (L.ausgestellt(a) && a.bezahlt_am && a.bezahlt_am.slice(0, 4) === String(jahr)) erl += L.n(a.netto) * L.rgAnteil(a); });
+    var erl = 0, aus = 0, svs = 0, anl = 0, letzt = 0, pkw = 0;
+    /* Hochrechnung bis zum letzten Monat mit Kontoauszug: Erlöse und die meisten Ausgaben kommen erst mit dem Auszug.
+       Fotos aus dem laufenden Monat würden sonst die Hochrechnung verkürzen. */
+    D.bank.forEach(function (b) { if (b.jahr === jahr) letzt = Math.max(letzt, b.monat); });
+    if (!letzt) D.belege.forEach(function (b) { if (b.jahr === jahr) letzt = Math.max(letzt, b.monat); });
+    if (jahr < Number(L.heute().slice(0, 4))) letzt = 12;
+    letzt = Math.max(1, Math.min(12, letzt));
+    D.ausgang.forEach(function (a) { if (L.ausgestellt(a) && a.bezahlt_am && a.bezahlt_am.slice(0, 4) === String(jahr) && Number(a.bezahlt_am.slice(5, 7)) <= letzt) erl += L.n(a.netto) * L.rgAnteil(a); });
     D.belege.forEach(function (b) {
-      if (b.jahr !== jahr || !L.zaehlt(b)) return;
+      if (b.jahr !== jahr || b.monat > letzt || !L.zaehlt(b)) return;
       var k = Number(b.konto), netto = L.n(b.netto);
       if (k === 3600) svs += netto;
       else if (k > 0 && k < 1000) { if (netto <= 1000) aus += netto; else anl += netto / 5 * (b.monat > 6 ? 0.5 : 1); }
       else if (k >= 4000 && k < 9000) aus += netto;
+      if (L.pkwKosten(b)) pkw += netto;
     });
-    D.bank.forEach(function (b) { if (b.jahr === jahr) letzt = Math.max(letzt, b.monat); });
-    D.belege.forEach(function (b) { if (b.jahr === jahr) letzt = Math.max(letzt, b.monat); });
-    if (jahr < Number(L.heute().slice(0, 4))) letzt = 12;
-    letzt = Math.max(1, Math.min(12, letzt));
-    var f = 12 / letzt, st = D.einst.steuer || {};
-    function rechne(e, a, s, an) {
-      var gewinn = L.r2(e - a - s - an), gfb = gewinn > 0 ? L.r2(Math.min(gewinn, 33000) * 0.15) : 0;
+    var f = 12 / letzt, st = D.einst.steuer || {}, pp = Math.max(0, Math.min(100, L.n(st.pkw_privat)));
+    function rechne(e, a, s, an, kfz) {
+      var pkwPrivat = L.r2(kfz * pp / 100);
+      var gewinn = L.r2(e - a - s - an + pkwPrivat), gfb = gewinn > 0 ? L.r2(Math.min(gewinn, 33000) * 0.15) : 0;
       var weitere = L.n(st.weitere_einkuenfte), eink = Math.max(0, L.r2(gewinn - gfb + weitere));
       var est = L.est(eink, jahr), vz = L.n(st.est_vz_jahr);
-      return { erloese: L.r2(e), ausgaben: L.r2(a), svs: L.r2(s), afa: L.r2(an), gewinn: gewinn, gfb: gfb, weitere: weitere, einkommen: eink, est: est, vz: vz, differenz: L.r2(est - vz) };
+      return { erloese: L.r2(e), ausgaben: L.r2(a), svs: L.r2(s), afa: L.r2(an), pkw: L.r2(kfz), pkwProzent: pp, pkwPrivat: pkwPrivat, gewinn: gewinn, gfb: gfb, weitere: weitere, einkommen: eink, est: est, vz: vz, differenz: L.r2(est - vz) };
     }
-    return { monate: letzt, bisher: rechne(erl, aus, svs, anl), jahr: rechne(erl * f, aus * f, svs * f, anl) };
+    return { monate: letzt, bisher: rechne(erl, aus, svs, anl, pkw), jahr: rechne(erl * f, aus * f, svs * f, anl, pkw * f) };
   };
 
   /* ---------- Unterlagen für die Steuererklärung (privat, nicht in der Buchhaltung) ---------- */

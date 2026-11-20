@@ -121,9 +121,10 @@
         '<div class="narrow"><div class="card"><div class="head"><h2>Jahresvorschau ' + j + '</h2></div><div style="font-size:15px">' + ergebnis + ' bei der Einkommensteuer.</div>' +
         '<div class="tbl-wrap"><table class="tbl"><thead><tr><th></th><th class="r">bisher (' + v.monate + ' Mon.)</th><th class="r">aufs Jahr</th></tr></thead><tbody>' +
         zeile('Erlöse netto', b.erloese, y.erloese) + zeile('Ausgaben netto', -b.ausgaben, -y.ausgaben) + zeile('SVS-Beiträge', -b.svs, -y.svs) + (b.afa ? zeile('Abschreibung (grob)', -b.afa, -y.afa) : '') +
+        (y.pkwPrivat ? zeile('PKW-Privatanteil ' + L.fmt(y.pkwProzent).replace(/,00$/, '') + ' %', b.pkwPrivat, y.pkwPrivat) : '') +
         zeile('Gewinn', b.gewinn, y.gewinn, true) + zeile('Grundfreibetrag 15 %', -b.gfb, -y.gfb) + (y.weitere ? zeile('Weitere Einkünfte', b.weitere, y.weitere) : '') + zeile('Einkommen', b.einkommen, y.einkommen, true) +
         zeile('Einkommensteuer', b.est, y.est) + zeile('Vorauszahlungen', -b.vz, -y.vz) + zeile('Differenz', b.differenz, y.differenz, true) + '</tbody></table></div>' +
-        '<p class="s" style="margin:0">Schätzung mit dem Tarif ' + (L.TARIF[j] ? j : 'des letzten bekannten Jahres') + '. „Aufs Jahr“ rechnet den Monatsschnitt hoch. Ohne Taggelder, Privatanteile, Kürzungen bei Bewirtung und Abgrenzungen; das macht CNC.</p></div></div></div>';
+        '<p class="s" style="margin:0">Schätzung mit dem Tarif ' + (L.TARIF[j] ? j : 'des letzten bekannten Jahres') + '. „Aufs Jahr“ rechnet den Monatsschnitt hoch.' + (y.pkwPrivat ? ' PKW-Privatanteil: ' + L.fmt(y.pkwProzent).replace(/,00$/, '') + ' % von ' + L.eur(y.pkw) + ' PKW-Kosten im Jahr (Treibstoff, Service, Parken, Vignette, Versicherung) werden zum Gewinn dazugerechnet.' : ' PKW-Privatanteil ist noch nicht eingetragen (Werte ändern).') + ' Ohne Taggelder, Abschreibung des Autos, Kürzungen bei Bewirtung und Abgrenzungen; das macht CNC.</p></div></div></div>';
     }
   };
   /* Steuertermin (ESt-Vorauszahlung, SVS) von Hand als erledigt eintragen, z. B. wenn der Kontoauszug noch fehlt */
@@ -169,13 +170,13 @@
     var st = D.einst.steuer || {}, f = function (k, l, hint) { return '<label class="f">' + l + '<input class="in" name="' + k + '" value="' + h(st[k] === undefined || st[k] === null ? '' : (typeof st[k] === 'number' ? L.fmt(st[k]) : st[k])) + '">' + (hint ? '<span class="hint">' + hint + '</span>' : '') + '</label>'; };
     APP.modal({
       title: 'Steuerwerte', body: '<div class="grid g2" id="sw">' + f('stnr', 'Steuernummer') + f('est_vz_jahr', 'ESt-Vorauszahlung im Jahr €', 'laut letztem Bescheid') + f('est_vz_quartal', 'davon je Quartal €') + f('svs_quartal', 'SVS-Beitrag je Quartal €') +
-        f('abgabenkonto_guthaben', 'Guthaben am Abgabenkonto €') + '<label class="f">Stand des Abgabenkontos<input class="in" name="abgabenkonto_stand" value="' + h(L.datum(st.abgabenkonto_stand || '')) + '" placeholder="TT.MM.JJJJ"></label>' + f('weitere_einkuenfte', 'Weitere Einkünfte im Jahr €', 'z. B. Gehalt; für die Jahresvorschau') + '</div>',
+        f('abgabenkonto_guthaben', 'Guthaben am Abgabenkonto €') + '<label class="f">Stand des Abgabenkontos<input class="in" name="abgabenkonto_stand" value="' + h(L.datum(st.abgabenkonto_stand || '')) + '" placeholder="TT.MM.JJJJ"></label>' + f('weitere_einkuenfte', 'Weitere Einkünfte im Jahr €', 'z. B. Gehalt; für die Jahresvorschau') + f('pkw_privat', 'PKW-Privatanteil %', 'private Fahrten; wird für die Jahresvorschau zum Gewinn dazugerechnet') + '</div>',
       foot: '<button type="button" class="btn" data-act="schliessen">Abbrechen</button><button type="button" class="btn pri" data-act="steuer-speichern">Speichern</button>'
     });
   };
   APP.A['steuer-speichern'] = function (el) {
     var v = APP.formDaten(document.getElementById('sw')), st = Object.assign({}, D.einst.steuer || {});
-    ['est_vz_jahr', 'est_vz_quartal', 'svs_quartal', 'abgabenkonto_guthaben', 'weitere_einkuenfte'].forEach(function (k) { var n = L.parse(v[k]); st[k] = isFinite(n) ? n : 0; });
+    ['est_vz_jahr', 'est_vz_quartal', 'svs_quartal', 'abgabenkonto_guthaben', 'weitere_einkuenfte', 'pkw_privat'].forEach(function (k) { var n = L.parse(v[k]); st[k] = isFinite(n) ? n : 0; });
     st.stnr = v.stnr; st.abgabenkonto_stand = L.isoAus(v.abgabenkonto_stand) || st.abgabenkonto_stand;
     APP.lauf(el, function () { return APP.einstellung('steuer', st).then(function () { APP.schliessen(); APP.toast('Gespeichert.'); APP.render(); }); });
   };
