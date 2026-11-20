@@ -235,6 +235,14 @@
   L.bankNahe = function (D, iso, re, vor, nach) {
     return D.bank.find(function (b) { var t = L.tageBis(b.datum, iso); return b.betrag < 0 && re.test(b.name + ' ' + b.info) && t <= vor && -t <= nach; }) || null;
   };
+  /* Betrag laut abgelegter Post (Benachrichtigung, Vorschreibung) für einen Termin, wenn die Fälligkeit passt */
+  L.postBetrag = function (D, re, iso) {
+    var u = (D.einst.unterlagen || []).filter(function (x) {
+      var z = x.art === 'behoerde' && x.info && x.info.naechste_zahlung;
+      return z && re.test(x.stelle || '') && z.faellig && Math.abs(L.tageBis(z.faellig, iso)) <= 10;
+    }).sort(function (a, b) { return String(b.datum || b.am).localeCompare(String(a.datum || a.am)); })[0];
+    return u ? { betrag: L.n(u.info.naechste_zahlung.betrag), was: u.info.naechste_zahlung.was || u.titel, quelle: u } : null;
+  };
   L.termine = function (D, jahr) {
     var st = D.einst.steuer || {}, out = [];
     var istAb = L.istAb(D);
@@ -251,14 +259,14 @@
     var vzq = L.n(st.est_vz_quartal), man = D.einst.termine_erledigt || {};
     L.ESTQ.forEach(function (q) {
       var iso = jahr + '-' + L.p2(q[0]) + '-' + L.p2(q[1]);
-      var z = L.bankNahe(D, iso, /finanzamt.*\bE\b/i, 25, 30), m = man['est|' + iso];
-      out.push({ datum: iso, art: 'est', key: 'est|' + iso, titel: 'Einkommensteuer-Vorauszahlung', betrag: vzq, erledigt: !!z || !!m, zahlung: z, manuell: m || null });
+      var z = L.bankNahe(D, iso, /finanzamt.*\bE\b/i, 25, 30), m = man['est|' + iso], p = L.postBetrag(D, /finanzamt/i, iso);
+      out.push({ datum: iso, art: 'est', key: 'est|' + iso, titel: 'Einkommensteuer-Vorauszahlung', betrag: z ? Math.abs(L.n(z.betrag)) : p ? p.betrag : vzq, post: p, erledigt: !!z || !!m, zahlung: z, manuell: m || null });
     });
     var sq = L.n(st.svs_quartal);
     L.SVSQ.forEach(function (q) {
       var iso = jahr + '-' + L.p2(q[0]) + '-' + L.p2(q[1]);
-      var z = L.bankNahe(D, iso, /sozialversicherung|\bsvs\b/i, 25, 30), m = man['svs|' + iso];
-      out.push({ datum: iso, art: 'svs', key: 'svs|' + iso, titel: 'SVS-Beiträge', betrag: sq, erledigt: !!z || !!m, zahlung: z, manuell: m || null });
+      var z = L.bankNahe(D, iso, /sozialversicherung|\bsvs\b/i, 25, 30), m = man['svs|' + iso], p = L.postBetrag(D, /svs|sozialversicherung/i, iso);
+      out.push({ datum: iso, art: 'svs', key: 'svs|' + iso, titel: 'SVS-Beiträge', betrag: z ? Math.abs(L.n(z.betrag)) : p ? p.betrag : sq, post: p, erledigt: !!z || !!m, zahlung: z, manuell: m || null });
     });
     out.sort(function (a, b) { return a.datum.localeCompare(b.datum); });
     return out.filter(function (t) { return t.datum.slice(0, 4) === String(jahr); });
@@ -276,12 +284,12 @@
     [j, j + 1].forEach(function (jj) {
       L.termine(D, jj).forEach(function (t) {
         if (t.art === 'uva' || t.erledigt || t.datum < L.plusTage(heute, -20) || t.datum > bis) return;
-        posten.push({ titel: t.titel, betrag: t.betrag, datum: t.datum, art: t.art });
+        posten.push({ titel: t.titel, betrag: t.betrag, datum: t.datum, art: t.art, hinweis: t.post ? 'laut ' + (t.post.quelle.titel || 'Schreiben') + (t.post.quelle.datum ? ' vom ' + L.datum(t.post.quelle.datum) : '') : undefined });
       });
     });
     var g = (D.einst.steuer || {}), guthaben = L.n(g.abgabenkonto_guthaben);
     var est = posten.filter(function (p) { return p.art === 'est'; })[0];
-    if (est && guthaben > 0) { var abz = Math.min(guthaben, est.betrag); est.hinweis = 'abzüglich Guthaben am Abgabenkonto ' + L.eur(abz); est.betrag = L.r2(est.betrag - abz); }
+    if (est && guthaben > 0) { var abz = Math.min(guthaben, est.betrag); est.hinweis = (est.hinweis ? est.hinweis + ', ' : '') + 'abzüglich Guthaben am Abgabenkonto ' + L.eur(abz); est.betrag = L.r2(est.betrag - abz); }
     var summe = L.r2(posten.reduce(function (n, p) { return n + L.n(p.betrag); }, 0));
     var k = L.kontostand(D);
     return { posten: posten, summe: summe, kontostand: k, frei: L.r2(k.betrag - summe) };

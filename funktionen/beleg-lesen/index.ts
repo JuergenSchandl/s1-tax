@@ -168,7 +168,8 @@ async function alsUnterlage(sb: any, row: any, r: any, person: string) {
   const vzJahr = zahl(b.est_vz_jahresbetrag);
   if (fa && vzJahr > 0 && vzJahr < 200000 && jahr === jetzt && vzJahr !== zahl(st.est_vz_jahr)) { st.est_vz_jahr = vzJahr; geaendert.push("ESt-Vorauszahlung im Jahr " + eur(vzJahr)); }
   if (fa && nz && /einkommensteuer/i.test(titel + " " + nz.was) && nz.faellig >= heute && nz.betrag !== zahl(st.est_vz_quartal)) { st.est_vz_quartal = nz.betrag; geaendert.push("nächste ESt-Vorauszahlung " + eur(nz.betrag)); }
-  const sq = zahl(b.svs_quartalsbetrag);
+  // SVS: für die Rücklage zählt, was je Quartal tatsächlich zu zahlen ist (Beitragsvorschreibung inkl. Nachbemessungen)
+  const sq = svs && nz && /beitr|vorschreib/i.test(titel + " " + nz.was) ? nz.betrag : zahl(b.svs_quartalsbetrag);
   if (svs && sq > 0 && sq < 100000 && sq !== zahl(st.svs_quartal)) { st.svs_quartal = sq; geaendert.push("SVS je Quartal " + eur(sq)); }
   if (fa && ak && (!st.abgabenkonto_stand || ak.stand > st.abgabenkonto_stand)) { st.abgabenkonto_guthaben = ak.guthaben ? ak.betrag : 0; st.abgabenkonto_stand = ak.stand; geaendert.push("Abgabenkonto " + (ak.guthaben ? "Guthaben " + eur(ak.betrag) : "ohne Guthaben")); }
   if (geaendert.length) await sb.from("einstellungen").upsert({ key: "steuer", value: st });
