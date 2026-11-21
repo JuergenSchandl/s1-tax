@@ -127,7 +127,7 @@
       var ql = q.toLowerCase(), hat = function () { for (var i = 0; i < arguments.length; i++) if (String(arguments[i] || '').toLowerCase().indexOf(ql) >= 0) return true; return false; };
       var gr = L.gruppen(D.belege).filter(function (g) {
         if (istBetrag && (Math.abs(g.brutto - Math.abs(n)) < 0.005 || Math.abs(g.netto - Math.abs(n)) < 0.005)) return true;
-        return hat(g.lieferant, g.text, g.notiz, g.rechnungsnr, L.belegNr(g), g.rows.map(function (b) { return b.volltext; }).join(' '), g.rows.map(function (b) { return b.konto; }).join(' '));
+        return hat(g.lieferant, g.text, g.notiz, g.rechnungsnr, L.belegNr(g), g.rows.map(function (b) { return b.volltext; }).join(' '), L.bewirtungText(g), g.rows.map(function (b) { return b.konto; }).join(' '));
       }).sort(function (a, b) { return String(b.datum).localeCompare(String(a.datum)); });
       var ar = D.ausgang.filter(function (a) { return (istBetrag && (Math.abs(a.brutto - Math.abs(n)) < 0.005 || Math.abs(a.netto - Math.abs(n)) < 0.005)) || hat(a.nr, a.kunde, a.notiz, a.zeitraum); });
       var bk = D.bank.filter(function (b) { return (istBetrag && Math.abs(Math.abs(b.betrag) - Math.abs(n)) < 0.005) || hat(b.name, b.info, b.notiz); }).sort(function (a, b) { return b.datum.localeCompare(a.datum); });
@@ -327,7 +327,7 @@
     var l = L.pruefung(D), warn = l.filter(function (x) { return x.art === 'warn'; }), info = l.filter(function (x) { return x.art !== 'warn'; });
     var zeile = function (x) { return '<' + (x.ziel ? 'button type="button" data-go="' + h(ziel(x.ziel)) + '"' : 'div') + ' class="item"><div class="grow"><span class="t">' + h(x.text) + '</span><span class="s">' + h(x.bereich) + '</span></div><span class="chip ' + (x.art === 'warn' ? 'bad' : '') + '">' + (x.art === 'warn' ? 'prüfen' : 'Info') + '</span></' + (x.ziel ? 'button' : 'div') + '>'; };
     return '<div class="card"><div class="head"><h2>Selbstprüfung</h2><span class="chip ' + (warn.length ? 'bad' : 'ok') + '">' + (warn.length ? warn.length + (warn.length === 1 ? ' Widerspruch' : ' Widersprüche') : 'keine Widersprüche') + '</span></div>' +
-      '<p class="s" style="margin:0 0 8px">Die App rechnet bei jedem Öffnen nach: UVA gegen gemeldete und bezahlte Beträge, jeden Beleg (netto + USt, Steuersatz, Konto, Auto ohne Vorsteuer), Belegnummern lückenlos, Abbuchungen gegen Belege, doppelte Dateien, Zahlungseingänge gegen Rechnungen.</p>' +
+      '<p class="s" style="margin:0 0 8px">Die App rechnet bei jedem Öffnen nach: UVA gegen gemeldete und bezahlte Beträge, jeden Beleg (netto + USt, Steuersatz, Konto, Auto ohne Vorsteuer, Bewirtung mit wem), Belegnummern lückenlos, Abbuchungen gegen Belege, doppelte Dateien, Zahlungseingänge gegen Rechnungen.</p>' +
       (l.length ? '<div class="list">' + warn.concat(info).map(zeile).join('') + '</div>' : '') + '</div>';
   }
   /* Regeln je Lieferant: z. B. bei Spusu ist nur die Leitung von Jürgen geschäftlich */

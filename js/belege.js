@@ -53,7 +53,7 @@
       return '<tr class="' + cls.join(' ') + '" data-act="beleg" data-g="' + g.gruppe + '">' +
         '<td class="num">' + (L.belegNr(g) || '<span class="mut">neu</span>') + (opt.monat ? '<div class="s">' + L.MON[g.monat] + '</div>' : '') + '</td>' +
         '<td class="num hm">' + L.datumKurz(g.datum) + '</td>' +
-        '<td><b>' + h(g.lieferant || '(noch nicht gelesen)') + '</b><div class="s">' + h(g.storniert && g.notiz ? g.notiz : (g.text || '')) + '</div></td>' +
+        '<td><b>' + h(g.lieferant || '(noch nicht gelesen)') + '</b><div class="s">' + h(g.storniert && g.notiz ? g.notiz : (g.text || '')) + (g.storniert ? '' : h(L.bewirtungText(g))) + '</div></td>' +
         '<td class="hm">' + h(konto) + '</td>' +
         '<td class="r num">' + L.fmt(g.brutto) + '</td>' +
         '<td class="r num hm">' + L.fmt(g.netto) + '</td>' +
@@ -207,6 +207,37 @@
   function privatHaken(an) {
     return '<label class="f zp" style="flex-direction:row;gap:8px;align-items:center;font-weight:500;margin:8px 0 4px"><input type="checkbox" name="zprivat"' + (an ? ' checked' : '') + '> <span>Privat (zählt nicht als Betriebsausgabe)</span></label>';
   }
+  /* Bewirtung: mit wem und Anlass (für die Steuer nötig). Sichtbar bei Konto 7652 oder einem Lokal als Lieferant */
+  var LOKAL = /(restaurant|ristorante|restaurante|gasthaus|gasthof|wirt\b|stadtwirt|heuriger|beisl|cafe|café|caffè|bistro|bar\b|sportsbar|pizz|trattoria|osteria|taverne|bräu|stube|mesón|cervecer|brasserie|kantine|zimmerservice)/i;
+  function istBewirtung(lieferant, konten) {
+    if (konten.some(function (k) { return Number(k) === 7652; })) return true;
+    return !konten.some(function (k) { return k; }) && LOKAL.test(lieferant || '');
+  }
+  APP.istBewirtung = istBewirtung;
+  function bewirtungBlock(g, rows) {
+    var bw = (rows.map(function (b) { return b.bewirtung; }).filter(Boolean)[0]) || {};
+    var an = istBewirtung(g.lieferant, rows.filter(function (b) { return !b.storniert && b.status !== 'privat'; }).map(function (b) { return b.konto; }));
+    var mit = {}, anlass = {};
+    D.belege.slice().sort(function (a, b) { return String(b.datum || '').localeCompare(String(a.datum || '')); }).forEach(function (b) {
+      if (b.bewirtung && b.bewirtung.mit) mit[b.bewirtung.mit] = 1;
+      if (b.bewirtung && b.bewirtung.anlass) anlass[b.bewirtung.anlass] = 1;
+    });
+    var liste = function (id, o) { return '<datalist id="' + id + '">' + Object.keys(o).slice(0, 40).map(function (x) { return '<option value="' + h(x) + '">'; }).join('') + '</datalist>'; };
+    return '<div id="bewirtung" class="bewirtung"' + (an ? '' : ' hidden') + '><div class="grid g2">' +
+      '<label class="f">Bewirtung: mit wem<input class="in" name="bew_mit" list="bew-mit" autocomplete="off" placeholder="Name, Firma (z. B. Andreas Ubl, IFMS)" value="' + h(bw.mit || '') + '"></label>' +
+      '<label class="f">Anlass<input class="in" name="bew_anlass" list="bew-anlass" autocomplete="off" placeholder="z. B. Projektbesprechung" value="' + h(bw.anlass || '') + '"></label>' +
+      '</div><span class="s">Für die Steuer nötig: wer bewirtet wurde und der geschäftliche Anlass.</span>' + liste('bew-mit', mit) + liste('bew-anlass', anlass) + '</div>';
+  }
+  function bewirtungZeigen() {
+    var box = document.getElementById('bewirtung'); if (!box) return;
+    var form = document.getElementById('beleg-form'), d = document.getElementById('dlg');
+    var konten = APP.$$('#zeilen [name="konto"]').map(function (x) { return x.value; });
+    var lf = form && form.querySelector('[name="lieferant"]');
+    var privat = d && d._beleg && d._beleg.status === 'privat';
+    box.hidden = privat || !(istBewirtung(lf ? lf.value : '', konten) || box.querySelector('[name="bew_mit"]').value);
+  }
+  document.addEventListener('input', function (e) { if (e.target.closest('#beleg-form') && /^(konto|lieferant)$/.test(e.target.name)) bewirtungZeigen(); });
+  document.addEventListener('click', function (e) { if (e.target.closest('#dlg [data-seg="status"] button')) setTimeout(bewirtungZeigen, 0); });
   function zeileHtml(b, i, mehr) {
     var art = b.steuerart || 'vst';
     return '<div class="card" style="background:#F8F9F6;padding:12px" data-zeile="' + i + '"' + (b.id ? ' data-id="' + b.id + '"' : '') + '>' +
@@ -289,6 +320,7 @@
       (g.storniert ? '<div class="note bad">Dieser Beleg ist storniert und zählt nirgends mit.</div>' : '') +
       (!neu && S.zuschnitt && S.zuschnitt[g.gruppe] ? '<div class="note" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="grow">Foto automatisch zugeschnitten und gerade gerichtet.</span><button type="button" class="btn small" data-act="zuschnitt-original" data-g="' + h(g.gruppe) + '">Ganzes Foto verwenden</button></div>' : '') +
       (!neu ? lesungHinweis(g) : '') +
+      (!g.storniert ? bewirtungBlock(g, rows) : '') +
       '<div class="cols"><div class="narrow" style="flex-basis:340px">' + (neu ? '<div class="note">Für Belege ohne Datei, z. B. wenn der Kontoauszug als Beleg reicht. Foto oder PDF kannst du danach hinzufügen.</div>' : dateiVorschau(g)) +
       (bk ? '<div class="note ok" style="margin-top:8px">Mit dem Konto verbunden: ' + L.datum(bk.datum) + ' · ' + h(bk.name) + ' · ' + L.eur(bk.betrag) + '</div>' : (!neu && g.zahlung === 'bank' ? '<div class="note" style="margin-top:8px">Noch keiner Bankbuchung zugeordnet.</div>' : '')) +
       '</div><div class="wide" style="display:flex;flex-direction:column;gap:12px" id="beleg-form">' +
@@ -386,8 +418,16 @@
     if (fehler) { APP.toast(fehler, { bad: true }); return; }
     var gemeinsam = { datum: datum, lieferant: v.lieferant.trim(), zahlung: st.zahlung, status: st.status, jahr: jahr, monat: monat, rechnungsnr: v.rechnungsnr || null, notiz: v.notiz || null, anlage: !!v.anlage, garantie_bis: v.garantie_bis || null, bestaetigt: true };
     if (!v.anlage && st.status !== 'privat' && zeilen.some(function (z) { return z.netto > 1000 && Number(z.konto) >= 4000; })) APP.toast('Hinweis: über 1.000 € netto – wenn es ein Gerät ist, als Anlagegut markieren.');
+    var bwBox = document.getElementById('bewirtung'), bwAn = bwBox && !bwBox.hidden;
+    var bwWert = function (n) { var x = bwBox && bwBox.querySelector('[name="' + n + '"]'); return x ? x.value.trim() : ''; };
+    var bwMit = bwWert('bew_mit'), bwAnlass = bwWert('bew_anlass');
+    if (bwAn) gemeinsam.bewirtung = bwMit || bwAnlass ? { mit: bwMit || null, anlass: bwAnlass || null, am: L.heute(), von: APP.ich() } : null;
+    var bwFehlt = bwAn && !bwMit && st.status !== 'privat' && zeilen.some(function (z) { return Number(z.konto) === 7652 && !z.privat; });
     var verdacht = st.g && st.g.rows.some(L.doppelVerdacht);
-    (verdacht ? APP.bestaetigen('Die App hält diesen Beleg für ein Doppel eines bestehenden Belegs. Wenn du ihn trotzdem bestätigst, zählt er zusätzlich mit (Vorsteuer, Excel für CNC). Wirklich als eigenen Beleg speichern?', 'Ja, eigener Beleg') : Promise.resolve(true)).then(function (ok) {
+    (bwFehlt ? APP.bestaetigen('Bei einer Bewirtung will das Finanzamt wissen, wer bewirtet wurde und warum. Ohne Angabe speichern?', 'Ohne Angabe speichern') : Promise.resolve(true)).then(function (ok0) {
+    if (!ok0) return false;
+    return verdacht ? APP.bestaetigen('Die App hält diesen Beleg für ein Doppel eines bestehenden Belegs. Wenn du ihn trotzdem bestätigst, zählt er zusätzlich mit (Vorsteuer, Excel für CNC). Wirklich als eigenen Beleg speichern?', 'Ja, eigener Beleg') : true;
+    }).then(function (ok) {
     if (!ok) return;
     if (verdacht) st.g.rows.forEach(function (b) { if (b.lesung && b.lesung.ki) { b._lesung = JSON.parse(JSON.stringify(b.lesung)); b._lesung.ki.doppelt_gruppe = null; b._lesung.ki.doppelt_geprueft = APP.ich(); } });
     APP.lauf(el, function () {

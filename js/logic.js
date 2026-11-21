@@ -73,6 +73,7 @@
     var aktiv = g.rows.filter(function (b) { return !b.storniert; });
     if (!aktiv.length || !g.lieferant || !g.datum || g.nr) return null;
     if (aktiv.some(function (b) { return b.anlage || b.status === 'unklar'; })) return null;
+    if (aktiv.some(function (b) { return Number(b.konto) === 7652 && b.status !== 'privat' && !(b.bewirtung && b.bewirtung.mit); })) return null; /* Bewirtung: erst eintragen, mit wem */
     var ids = aktiv.map(function (b) { return b.id; });
     if ((D.fragen || []).some(function (f) { return !f.erledigt && ids.indexOf(f.datensatz) >= 0; })) return null;
     if (aktiv.some(function (b) { var k = b.lesung && b.lesung.ki; return k && (k.doppelt || k.frage || k.an_s1 === false); })) return null;
@@ -530,6 +531,12 @@
   };
 
   /* ---------- Excel für CNC ---------- */
+  /* Bewirtung: " · mit X (Anlass)" für Liste und Excel */
+  L.bewirtungText = function (g) {
+    var bw = (g.rows || []).map(function (b) { return b.bewirtung; }).filter(Boolean)[0];
+    if (!bw || !(bw.mit || bw.anlass)) return '';
+    return (bw.mit ? ' · mit ' + bw.mit : '') + (bw.anlass ? ' (' + bw.anlass + ')' : '');
+  };
   L.monatsExcel = function (D, j, m) {
     var auszug = 'Kontoauszug N26/' + L.p2(m) + '-' + j;
     var gr = L.gruppen(D.belege, function (b) { return b.jahr === j && b.monat === m && L.zaehlt(b); }).sort(L.sortBelege);
@@ -554,7 +561,7 @@
         if (b0.anlage) hinw.push('Anlagegut');
         if (b0.status === 'unklar') hinw.push('unklar');
         if (b0.waehrung && b0.waehrung !== 'EUR') hinw.push('Währung ' + b0.waehrung);
-        rows.push([{ v: g.datum || null, t: 'd', s: 'datum' }, g.lieferant, '', b0.text, Number(b0.konto) || null, { v: brutto, s: 'buch' }, netto, { f: '=F' + ri + '-G' + ri, s: 'buch' }, g.zahlung === 'bar' ? 'Barbeleg' : auszug, { v: L.belegNr(g) || 'neu', t: 's', s: 'text' }, hinw.join(', ') || null]);
+        rows.push([{ v: g.datum || null, t: 'd', s: 'datum' }, g.lieferant, '', b0.text + L.bewirtungText(g), Number(b0.konto) || null, { v: brutto, s: 'buch' }, netto, { f: '=F' + ri + '-G' + ri, s: 'buch' }, g.zahlung === 'bar' ? 'Barbeleg' : auszug, { v: L.belegNr(g) || 'neu', t: 's', s: 'text' }, hinw.join(', ') || null]);
       });
     });
     var last = rows.length;
@@ -654,6 +661,7 @@
       if (b.steuerart === 'vst' && us && L.kfz(b.konto)) add('warn', 'Beleg', wo + ': Auto-Konto ' + b.konto + ' mit Vorsteuer', z);
       if (b.steuerart === 'vst' && b.quelle !== 'import' && [20, 13, 10].indexOf(L.n(b.steuersatz)) >= 0 && Math.abs(us - L.r2(ne * L.n(b.steuersatz) / 100)) > 0.03) add('warn', 'Beleg', wo + ': Vorsteuer passt nicht zu ' + L.n(b.steuersatz) + ' %', z);
       if (!b.konto && b.status !== 'privat' && b.bestaetigt) add('warn', 'Beleg', wo + ': kein Konto', z);
+      if (Number(b.konto) === 7652 && b.quelle !== 'import' && b.status !== 'privat' && b.bestaetigt && !(b.bewirtung && b.bewirtung.mit)) add('warn', 'Bewirtung', wo + ': nicht eingetragen, mit wem', z);
     });
     /* 3. Belegnummern lückenlos */
     [j0, j0 + 1].forEach(function (jj) {

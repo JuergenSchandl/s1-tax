@@ -240,3 +240,5 @@ img.vorschau-datei { object-fit: contain; }
   #toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
 }
 button.chip.bad { background: var(--badBg); color: var(--bad); border-color: transparent; white-space: normal; text-align: left; height: auto; padding: 6px 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.bewirtung { background: var(--yelBg); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.bewirtung[hidden] { display: none; }
