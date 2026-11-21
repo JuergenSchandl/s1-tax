@@ -15,7 +15,7 @@
     return { von: '01.' + L.p2(x.monat) + '.' + x.jahr, bis: L.datum(L.monatsEnde(x.jahr, x.monat)), zeitraum: '01. ' + MON3[x.monat] + ' – ' + L.monatsEnde(x.jahr, x.monat).slice(8) + '. ' + MON3[x.monat] + '. ' + x.jahr, monat: x };
   }
   function kdAusKunde(k) { k = k || {}; return { name1: k.name1 || '', name2: k.name2 || '', strasse: k.strasse || '', ort: k.ort || '', mail: k.mail || '', bestellnr: k.bestellnr || '', ansprech: k.ansprech || '', uid: k.uid || '', ziel: k.ziel || 14 }; }
-  function zustand(a) { if (a.storniert) return ['storniert', '']; if (a.entwurf) return ['Entwurf', 'yel']; if (L.bezahlt(a)) return ['bezahlt' + (a.bezahlt_am ? ' ' + L.datumKurz(a.bezahlt_am) : ''), 'ok']; var t = L.tageBis(L.faelligAm(a)); return t < 0 ? ['überfällig ' + (-t) + ' T.', 'bad'] : ['offen · fällig ' + L.datumKurz(L.faelligAm(a)), '']; }
+  function zustand(a) { if (a.storniert) return ['storniert', '']; if (a.entwurf) return ['Entwurf', 'yel']; if (L.bezahlt(a)) return ['bezahlt' + (a.bezahlt_am ? ' ' + L.datumKurz(a.bezahlt_am) : ''), 'ok']; var t = L.tageBis(L.faelligAm(a)), bis = L.bankBis(D); if (t < 0 && bis && L.faelligAm(a) > bis) return ['offen · Kontoauszug erst bis ' + L.datumKurz(bis), 'yel']; return t < 0 ? ['überfällig ' + (-t) + ' T.', 'bad'] : ['offen · fällig ' + L.datumKurz(L.faelligAm(a)), '']; }
 
   /* ---------- Übersicht ---------- */
   APP.V.ausgang = {
@@ -29,7 +29,7 @@
       var offen = D.ausgang.filter(L.offen).sort(function (a, b) { return a.datum.localeCompare(b.datum); });
       var entw = D.ausgang.filter(function (a) { return a.entwurf; });
       var offenSum = offen.reduce(function (n, a) { return n + L.n(a.brutto); }, 0);
-      var ueber = offen.filter(function (a) { return L.tageBis(L.faelligAm(a)) < 0; }).length;
+      var bisB = L.bankBis(D), ueber = offen.filter(function (a) { return L.tageBis(L.faelligAm(a)) < 0 && !(bisB && L.faelligAm(a) > bisB); }).length;
       var naechste = Math.max.apply(null, [0].concat(D.ausgang.filter(function (a) { return a.jahr === j && a.laufnr; }).map(function (a) { return a.laufnr; }))) + 1;
       var vl = vorlagen().map(function (v) {
         var vm = vormonat(L.heute()), sub = v.id === 'ifms' ? vm.von + ' – ' + vm.bis : v.id === 'oegk' ? vm.zeitraum : v.id === 'schulung' ? 'je Schulung + Pauschale, km à 0,50 €' : 'andere Kunden und Leistungen';

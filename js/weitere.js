@@ -14,6 +14,7 @@
     if (p[0] === 'uva') return 'uva/' + p[1];
     if (p[0] === 'monat') return 'monat/' + p[1];
     if (p[0] === 'ausgang') return 'rechnung/' + p[1];
+    if (p[0] === 'pruefung') return 'einstellungen';
     return p[0];
   }
   APP.V.uebersicht = {
@@ -285,6 +286,7 @@
           : '<p style="margin:0">Ordner: <b>' + h(o.handle.name) + '</b>' + (o.letzte ? ' · zuletzt gesichert ' + new Date(o.letzte.zeit).toLocaleString('de-AT') : '') + '</p><div class="chips"><button type="button" class="btn pri" data-act="sichern"' + (o.laeuft ? ' disabled' : '') + '>' + (o.laeuft ? '<span class="spin"></span> Sichert …' : 'Jetzt sichern') + '</button><button type="button" class="btn ghost" data-act="ordner-waehlen">Anderen Ordner wählen</button></div><p class="s" style="margin:0">Die App sichert bei jedem Öffnen am PC automatisch, wenn der Browser die Erlaubnis für den Ordner behalten hat.</p>';
       return '<div class="top"><h1>Einstellungen</h1></div>' +
         '<div class="cols"><div class="wide" style="display:flex;flex-direction:column;gap:20px">' +
+        pruefKarte() +
         '<div class="card"><div class="head"><h2>Firma (für die Rechnungen)</h2></div><div class="grid g2" id="firma">' + ff('name', 'Firmenname') + ff('inhaber', 'Inhaber') + ff('strasse', 'Straße') + ff('ort', 'PLZ und Ort') + ff('tel', 'Telefon (Kopf)') + ff('tel_fuss', 'Telefon (Fußzeile)') + ff('mail', 'E-Mail') + ff('web', 'Webseite') + ff('fn', 'Firmenbuchnummer') + ff('uid', 'UID-Nummer') + ff('bank', 'Bank') + ff('iban', 'IBAN', 'AT.. oder DE..') + ff('bic', 'BIC') + '</div>' + (ich === 'j' ? '<div><button type="button" class="btn pri" data-act="firma-speichern">Speichern</button></div>' : '') + '</div>' +
         '<div class="card"><div class="head"><h2>Sicherung in OneDrive</h2></div>' + sich + '</div>' +
         '<div class="card"><div class="head"><h2>Automatisches Lesen der Belege</h2></div><div id="ki-stand">' + kiStand() + '</div></div>' +
@@ -320,6 +322,14 @@
   APP.A['ordner-waehlen'] = function () { APP.ordnerWaehlen().then(function () { APP.toast('Ordner gewählt. Die erste Sicherung läuft …'); return APP.sichern(false); }).catch(function (e) { if (e && e.name !== 'AbortError') APP.fehler(e, 'Ordner'); }); };
   APP.A.sichern = function () { APP.sichern(false); };
   APP.A['daten-export'] = function () { APP.speichernUnter(APP.datenExport(), 'S1-Tax-Daten-' + L.heute() + '.json'); };
+  /* Selbstprüfung: was die App gegeneinander prüft und was ihr auffällt */
+  function pruefKarte() {
+    var l = L.pruefung(D), warn = l.filter(function (x) { return x.art === 'warn'; }), info = l.filter(function (x) { return x.art !== 'warn'; });
+    var zeile = function (x) { return '<' + (x.ziel ? 'button type="button" data-go="' + h(ziel(x.ziel)) + '"' : 'div') + ' class="item"><div class="grow"><span class="t">' + h(x.text) + '</span><span class="s">' + h(x.bereich) + '</span></div><span class="chip ' + (x.art === 'warn' ? 'bad' : '') + '">' + (x.art === 'warn' ? 'prüfen' : 'Info') + '</span></' + (x.ziel ? 'button' : 'div') + '>'; };
+    return '<div class="card"><div class="head"><h2>Selbstprüfung</h2><span class="chip ' + (warn.length ? 'bad' : 'ok') + '">' + (warn.length ? warn.length + (warn.length === 1 ? ' Widerspruch' : ' Widersprüche') : 'keine Widersprüche') + '</span></div>' +
+      '<p class="s" style="margin:0 0 8px">Die App rechnet bei jedem Öffnen nach: UVA gegen gemeldete und bezahlte Beträge, jeden Beleg (netto + USt, Steuersatz, Konto, Auto ohne Vorsteuer), Belegnummern lückenlos, Abbuchungen gegen Belege, doppelte Dateien, Zahlungseingänge gegen Rechnungen.</p>' +
+      (l.length ? '<div class="list">' + warn.concat(info).map(zeile).join('') + '</div>' : '') + '</div>';
+  }
   /* Regeln je Lieferant: z. B. bei Spusu ist nur die Leitung von Jürgen geschäftlich */
   function regelnKarte() {
     var r = D.einst.regeln || [];

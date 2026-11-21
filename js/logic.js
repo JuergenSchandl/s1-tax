@@ -230,6 +230,8 @@
     D.bank.forEach(function (b) { if (b.datum > ab) { v += L.n(b.betrag); if (b.datum > letzt) letzt = b.datum; } });
     return { betrag: L.r2(v), stand: letzt };
   };
+  /* bis zu welchem Tag Kontoauszüge eingelesen sind: danach kann die App Zahlungen noch nicht sehen */
+  L.bankBis = function (D) { var s = null; D.bank.forEach(function (b) { if (!s || b.datum > s) s = b.datum; }); return s; };
   L.ESTQ = [[2, 15], [5, 15], [8, 15], [11, 15]];
   L.SVSQ = [[2, 28], [5, 31], [8, 31], [11, 30]];
   L.bankNahe = function (D, iso, re, vor, nach) {
@@ -266,7 +268,8 @@
     L.SVSQ.forEach(function (q) {
       var iso = jahr + '-' + L.p2(q[0]) + '-' + L.p2(q[1]);
       var z = L.bankNahe(D, iso, /sozialversicherung|\bsvs\b/i, 25, 30), m = man['svs|' + iso], p = L.postBetrag(D, /svs|sozialversicherung/i, iso);
-      out.push({ datum: iso, art: 'svs', key: 'svs|' + iso, titel: 'SVS-Beiträge', betrag: z ? Math.abs(L.n(z.betrag)) : p ? p.betrag : sq, post: p, erledigt: !!z || !!m, zahlung: z, manuell: m || null });
+      var gs = !z && !p && st.svs_quartal_hinweis && L.n(st.svs_quartal_hinweis.betrag) === sq ? st.svs_quartal_hinweis.text : null;
+      out.push({ datum: iso, art: 'svs', key: 'svs|' + iso, titel: 'SVS-Beiträge', betrag: z ? Math.abs(L.n(z.betrag)) : p ? p.betrag : sq, post: p, geschaetzt: gs, erledigt: !!z || !!m, zahlung: z, manuell: m || null });
     });
     out.sort(function (a, b) { return a.datum.localeCompare(b.datum); });
     return out.filter(function (t) { return t.datum.slice(0, 4) === String(jahr); });
@@ -284,7 +287,7 @@
     [j, j + 1].forEach(function (jj) {
       L.termine(D, jj).forEach(function (t) {
         if (t.art === 'uva' || t.erledigt || t.datum < L.plusTage(heute, -20) || t.datum > bis) return;
-        posten.push({ titel: t.titel, betrag: t.betrag, datum: t.datum, art: t.art, hinweis: t.post ? 'laut ' + (t.post.quelle.titel || 'Schreiben') + (t.post.quelle.datum ? ' vom ' + L.datum(t.post.quelle.datum) : '') : undefined });
+        posten.push({ titel: t.titel, betrag: t.betrag, datum: t.datum, art: t.art, hinweis: t.post ? 'laut ' + (t.post.quelle.titel || 'Schreiben') + (t.post.quelle.datum ? ' vom ' + L.datum(t.post.quelle.datum) : '') : t.geschaetzt || undefined });
       });
     });
     var g = (D.einst.steuer || {}), guthaben = L.n(g.abgabenkonto_guthaben);
@@ -630,8 +633,65 @@
   };
 
   /* ---------- Hinweise für die Übersicht ---------- */
+  /* ---------- Selbstprüfung: Widersprüche in den Daten finden, bevor sie jemand anders findet ---------- */
+  L.pruefung = function (D) {
+    var out = [], heute = L.heute(), j0 = +heute.slice(0, 4) - 1;
+    var add = function (art, bereich, text, ziel) { out.push({ art: art, bereich: bereich, text: text, ziel: ziel || null }); };
+    /* 1. UVA: Berechnung der App gegen gemeldet bzw. bezahlt */
+    (D.monate || []).filter(function (mo) { return mo.jahr >= j0; }).sort(function (a, b) { return (a.jahr * 12 + a.monat) - (b.jahr * 12 + b.monat); }).forEach(function (mo) {
+      var u = L.uva(D, mo.jahr, mo.monat);
+      var ref = mo.uva_zahllast !== null && mo.uva_zahllast !== undefined ? L.n(mo.uva_zahllast) : u.zahlung ? -L.n(u.zahlung.betrag) : mo.uva_bezahlt !== null && mo.uva_bezahlt !== undefined ? L.n(mo.uva_bezahlt) : null;
+      if (ref === null) return;
+      var diff = L.r2(u.zahllast - ref);
+      if (Math.abs(diff) > 0.05) add(mo.notiz ? 'info' : 'warn', 'UVA', 'UVA ' + L.MONATE[mo.monat] + ' ' + mo.jahr + ': App ' + L.eur(u.zahllast) + ', gemeldet bzw. bezahlt ' + L.eur(ref) + ' (Differenz ' + L.eur(diff) + ')' + (mo.notiz ? '. Bekannt: ' + mo.notiz : ''), 'uva:' + mo.jahr + '-' + mo.monat);
+    });
+    /* 2. Belege: Rechnung, Steuer, Konto */
+    var aktiv = D.belege.filter(function (b) { return !b.storniert && b.jahr >= j0; });
+    aktiv.forEach(function (b) {
+      var br = L.n(b.brutto), ne = L.n(b.netto), us = L.n(b.ust), wo = (b.lieferant || 'Beleg') + ' ' + L.MONATE[b.monat] + ' ' + b.jahr + (b.nr ? ' (Nr. ' + b.nr + ')' : ''), z = 'monat:' + b.jahr + '-' + b.monat;
+      if (Math.abs(ne + us - br) > 0.011) add('warn', 'Beleg', wo + ': netto + USt ergibt nicht brutto', z);
+      if (b.steuerart !== 'vst' && us) add('warn', 'Beleg', wo + ': USt ' + L.eur(us) + ', obwohl ohne Vorsteuer gebucht', z);
+      if (b.steuerart === 'vst' && us && L.kfz(b.konto)) add('warn', 'Beleg', wo + ': Auto-Konto ' + b.konto + ' mit Vorsteuer', z);
+      if (b.steuerart === 'vst' && b.quelle !== 'import' && [20, 13, 10].indexOf(L.n(b.steuersatz)) >= 0 && Math.abs(us - L.r2(ne * L.n(b.steuersatz) / 100)) > 0.03) add('warn', 'Beleg', wo + ': Vorsteuer passt nicht zu ' + L.n(b.steuersatz) + ' %', z);
+      if (!b.konto && b.status !== 'privat' && b.bestaetigt) add('warn', 'Beleg', wo + ': kein Konto', z);
+    });
+    /* 3. Belegnummern lückenlos */
+    [j0, j0 + 1].forEach(function (jj) {
+      var n = {}; D.belege.forEach(function (b) { if (b.jahr === jj && b.nr) n[b.nr] = 1; });
+      var l = Object.keys(n).map(Number).sort(function (a, b) { return a - b; });
+      for (var i = 1; i < l.length; i++) if (l[i] !== l[i - 1] + 1) add('warn', 'Nummern', 'Belegnummern ' + jj + ': Lücke zwischen ' + l[i - 1] + ' und ' + l[i]);
+    });
+    /* 4. Bank gegen Beleg: Summe der Abbuchungen = Rechnungsbetrag */
+    var proG = {};
+    D.bank.forEach(function (bk) { if (bk.beleg_gruppe) (proG[bk.beleg_gruppe] = proG[bk.beleg_gruppe] || []).push(bk); });
+    Object.keys(proG).forEach(function (g) {
+      var rows = D.belege.filter(function (b) { return b.gruppe === g; });
+      var bk = proG[g], summe = L.r2(bk.reduce(function (n, x) { return n + Math.abs(L.n(x.betrag)); }, 0)), erst = bk[0];
+      if (!rows.length) { add('warn', 'Bank', L.datum(erst.datum) + ' ' + erst.name + ': der zugeordnete Beleg fehlt', 'bank:' + erst.jahr + '-' + erst.monat); return; }
+      var gg = L.gruppen(rows)[0];
+      if (gg.storniert) { add('warn', 'Bank', L.datum(erst.datum) + ' ' + erst.name + ': der zugeordnete Beleg ist storniert', 'bank:' + erst.jahr + '-' + erst.monat); return; }
+      if (Math.abs(summe - gg.brutto) > 0.05) add('warn', 'Bank', L.datum(erst.datum) + ' ' + erst.name + ': abgebucht ' + L.eur(summe) + ', Beleg ' + L.eur(gg.brutto) + ' (Differenz ' + L.eur(L.r2(summe - gg.brutto)) + ')', 'bank:' + erst.jahr + '-' + erst.monat);
+    });
+    /* 5. dieselbe Datei zweimal */
+    var hs = {};
+    D.belege.forEach(function (b) { var h = !b.storniert && b.lesung && b.lesung.hash; if (!h) return; (hs[h] = hs[h] || {})[b.gruppe] = b; });
+    Object.keys(hs).forEach(function (h) { var g = Object.keys(hs[h]); if (g.length > 1) add('warn', 'Doppelt', 'Dieselbe Datei ist ' + g.length + '× als Beleg erfasst: ' + hs[h][g[0]].lieferant, 'monat:' + hs[h][g[0]].jahr + '-' + hs[h][g[0]].monat); });
+    /* 6. Ausgangsrechnungen: Zahlung ≠ Rechnungsbetrag */
+    D.ausgang.forEach(function (a) {
+      if (!L.ausgestellt(a) || !a.bezahlt_am || a.bezahlt_betrag === null || a.bezahlt_betrag === undefined) return;
+      if (Math.abs(L.n(a.bezahlt_betrag) - L.n(a.brutto)) > 0.05) add('warn', 'Rechnung', 'Rechnung ' + a.nr + ' ' + a.kunde + ': bezahlt ' + L.eur(a.bezahlt_betrag) + ' statt ' + L.eur(a.brutto), 'ausgang:' + a.id);
+    });
+    /* 7. Steuerwerte aktuell? */
+    var st = D.einst.steuer || {};
+    if (st.abgabenkonto_stand && L.tageBis(heute, st.abgabenkonto_stand) > 60) add('info', 'Steuerwerte', 'Guthaben am Abgabenkonto zuletzt am ' + L.datum(st.abgabenkonto_stand) + ' eingetragen');
+    var bis = L.bankBis(D);
+    if (bis && L.tageBis(heute, bis) > 40) add('info', 'Bank', 'Kontoauszüge sind erst bis ' + L.datum(bis) + ' eingelesen', 'bank');
+    return out;
+  };
   L.hinweise = function (D, ich) {
     var out = [], heute = L.heute(), j = +heute.slice(0, 4);
+    var pw = L.pruefung(D).filter(function (x) { return x.art === 'warn'; });
+    if (pw.length) out.push({ prio: 2, ziel: 'pruefung', titel: 'Selbstprüfung: ' + pw.length + (pw.length === 1 ? ' Widerspruch' : ' Widersprüche'), text: pw[0].text });
     var neu = L.gruppen(D.belege, function (b) { return !b.storniert && !b.bestaetigt; });
     if (neu.length) out.push({ prio: 1, ziel: 'belege:neu', titel: neu.length + (neu.length === 1 ? ' neuer Beleg' : ' neue Belege') + ' zum Bestätigen', text: 'Die App hat sie gelesen. Bitte kurz prüfen.' });
     var offen = D.bank.filter(function (b) { return b.art === 'offen'; });
@@ -645,8 +705,10 @@
       if (!u.erledigt && x.jahr * 12 + x.monat < j * 12 + +heute.slice(5, 7) && t <= 12)
         out.push({ prio: t < 0 ? 0 : 1, ziel: 'uva:' + x.jahr + '-' + x.monat, titel: 'UVA ' + L.MONATE[x.monat] + ': ' + L.eur(u.zahllast), text: (t < 0 ? 'seit ' + (-t) + ' Tagen fällig' : t === 0 ? 'heute fällig' : 'fällig am ' + L.datum(u.faellig)) + (u.gemeldet ? ' · gemeldet' : ' · noch melden') });
     }
+    var bis = L.bankBis(D);
     D.ausgang.filter(L.offen).forEach(function (a) {
       var t = L.tageBis(L.faelligAm(a));
+      if (t < 0 && bis && L.faelligAm(a) > bis) return; /* Zahlung wäre erst im nächsten Kontoauszug zu sehen */
       if (t < 0) out.push({ prio: 2, ziel: 'ausgang:' + a.id, titel: 'Rechnung ' + a.nr + ' ' + a.kunde + ' überfällig', text: L.eur(a.brutto) + ' · seit ' + (-t) + ' Tagen' + (a.erinnert_am ? ' · erinnert am ' + L.datum(a.erinnert_am) : '') });
     });
     D.ausgang.filter(function (a) { return a.entwurf; }).forEach(function (a) {
