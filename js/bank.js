@@ -138,7 +138,7 @@
           return abgleichAnwenden(r.monat ? r.monat.jahr : null, r.monat ? r.monat.monat : null);
         }).then(function (n) {
           APP.schliessen();
-          APP.toast(rows.length + ' Buchungen übernommen, ' + n + ' automatisch zugeordnet.');
+          APP.ok(rows.length + ' Buchungen übernommen, ' + n + ' automatisch zugeordnet.');
           if (r.monat) APP.go('bank/' + r.monat.jahr + '-' + r.monat.monat); else APP.render();
         });
       });
@@ -168,7 +168,7 @@
   }
   APP.abgleichAnwenden = abgleichAnwenden;
   APP.A['auto-abgleich'] = function (el) {
-    APP.lauf(el, function () { return abgleichAnwenden(+el.dataset.j, +el.dataset.m).then(function (n) { APP.toast(n ? n + ' Buchung(en) zugeordnet.' : 'Keine eindeutigen Treffer. Bitte die offenen Buchungen einzeln klären.'); APP.render(); }); });
+    APP.lauf(el, function () { return abgleichAnwenden(+el.dataset.j, +el.dataset.m).then(function (n) { APP.toast(n ? n + ' Buchung(en) zugeordnet.' : 'Keine eindeutigen Treffer. Bitte die offenen Buchungen einzeln klären.', n ? { ok: true } : { warn: true }); APP.render(); }); });
   };
 
   /* ---------- eine Buchung klären ---------- */
@@ -214,12 +214,12 @@
         if (g.zahlung === 'bar') return APP.upd('belege', { gruppe: g.gruppe }, { zahlung: 'bank' });
       }).then(function () {
         if (!g.nr && (g.jahr !== b.jahr || g.monat !== b.monat)) return APP.upd('belege', { gruppe: g.gruppe }, { jahr: b.jahr, monat: b.monat }).then(function () { APP.toast('Beleg in den Monat der Zahlung verschoben (' + L.MONATE[b.monat] + ').'); });
-      }).then(function () { APP.schliessen(); APP.toast('Zugeordnet.'); });
+      }).then(function () { APP.schliessen(); APP.ok('Zugeordnet.'); });
     }
     var a = D.ausgang.find(function (x) { return x.id === el.dataset.a; });
     return APP.upd('bank', { id: b.id }, { art: 'ausgang', ausgang_id: a.id, beleg_gruppe: null, notiz: 'Eingang Rg ' + a.nr + ' ' + a.kunde }).then(function () {
       return APP.upd('ausgang', { id: a.id }, { bezahlt_am: b.datum, bezahlt_betrag: b.betrag });
-    }).then(function () { APP.schliessen(); APP.toast('Zahlung von ' + a.kunde + ' eingetragen.' + (Math.abs(a.brutto - b.betrag) > 0.005 ? ' Achtung: Betrag weicht ab (' + L.eur(a.brutto) + ').' : '')); });
+    }).then(function () { APP.schliessen(); APP.ok('Zahlung von ' + a.kunde + ' eingetragen.' + (Math.abs(a.brutto - b.betrag) > 0.005 ? ' Achtung: Betrag weicht ab (' + L.eur(a.brutto) + ').' : '')); });
   });
   APP.A['bank-art'] = nach(function (b, el) {
     var art = el.dataset.art, notiz = (document.getElementById('bank-notiz') || {}).value || null;
@@ -227,7 +227,7 @@
     if (art === 'einlage' && !notiz) notiz = 'Einlage Jürgen Schandl';
     return APP.upd('bank', { id: b.id }, { art: art, notiz: notiz }).then(function () { APP.schliessen(); APP.toast('Als ' + (ART[art] || [art])[0] + ' markiert.'); });
   });
-  APP.A['bank-notiz'] = nach(function (b) { return APP.upd('bank', { id: b.id }, { notiz: document.getElementById('bank-notiz').value || null }).then(function () { APP.toast('Notiz gespeichert.'); }); });
+  APP.A['bank-notiz'] = nach(function (b) { return APP.upd('bank', { id: b.id }, { notiz: document.getElementById('bank-notiz').value || null }).then(function () { APP.ok('Notiz gespeichert.'); }); });
   APP.A['bank-loesen'] = nach(function (b) {
     var job = Promise.resolve();
     if (b.ausgang_id) job = APP.upd('ausgang', { id: b.ausgang_id }, { bezahlt_am: null, bezahlt_betrag: null });
@@ -236,7 +236,7 @@
   APP.A['bank-wie'] = nach(function (b) {
     var w = L.steuerBuchung(b) || L.wieLetztesMal(D, b), gr = APP.uuid();
     return APP.ins('belege', [{ jahr: b.jahr, monat: b.monat, datum: b.datum, gruppe: gr, lieferant: w.lieferant, text: w.text, konto: w.konto, brutto: w.brutto, netto: w.netto, ust: w.ust, steuerart: w.steuerart, steuersatz: w.steuersatz || null, zahlung: 'bank', quelle: 'manuell', status: 'geschaeftlich', bestaetigt: true }])
-      .then(function () { return APP.upd('bank', { id: b.id }, { art: 'beleg', beleg_gruppe: gr }); }).then(function () { APP.schliessen(); APP.toast('Gebucht: ' + w.text); });
+      .then(function () { return APP.upd('bank', { id: b.id }, { art: 'beleg', beleg_gruppe: gr }); }).then(function () { APP.schliessen(); APP.ok('Gebucht: ' + w.text); });
   });
   APP.A['bank-neu-beleg'] = function (el) {
     var b = D.bank.find(function (x) { return x.id === el.dataset.id; }), w = L.steuerBuchung(b) || L.wieLetztesMal(D, b) || {};
@@ -247,10 +247,10 @@
     var i = document.createElement('input'); i.type = 'file'; i.accept = 'application/pdf,image/*';
     i.onchange = function () {
       if (!i.files.length) return;
-      APP.schliessen(); APP.toast('Rechnung wird hochgeladen und gelesen …');
-      APP.belegAnlegen(i.files[0], { jahr: b.jahr, monat: b.monat, zahlung: 'bank', quelle: 'upload', bank: b }).then(function (r) {
-        APP.render(); if (r && r.gruppe) APP.belegDialog(r.gruppe, { nachScan: true });
-      }).catch(function (e) { APP.fehler(e, 'Hochladen'); });
+      APP.schliessen();
+      APP.hochladenDateien([i.files[0]], { jahr: b.jahr, monat: b.monat, zahlung: 'bank', quelle: 'upload', bank: b }).then(function (l) {
+        var u = l && l[0]; APP.render(); if (u && u.gruppe) APP.belegDialog(u.gruppe, { nachScan: true });
+      });
     };
     i.click();
   };

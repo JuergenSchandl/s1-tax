@@ -70,7 +70,12 @@
     if (!S.uploads.length) return '';
     return '<div class="card"><div class="head"><h2>Hochgeladen</h2><button type="button" class="btn small ghost" data-act="uploads-leeren">Liste leeren</button></div><div class="prog">' +
       S.uploads.map(function (u) {
-        var st = u.status === 'fertig' ? '<span class="chip ok">' + h(u.text || 'gelesen') + '</span>' : u.status === 'fehler' ? (u.ziel ? '<button type="button" class="chip bad" data-act="doppelt-zeigen" data-g="' + h(u.gruppe || '') + '" data-ziel="' + h(u.ziel) + '" title="Bestehenden Beleg ansehen">' + h(u.text) + ' · ansehen</button>' : '<span class="chip bad">' + h(u.text) + '</span>') : u.status === 'wartet' ? '<span class="chip yel">wartet auf Netz</span>' : '<span class="mut"><span class="spin"></span> ' + h(u.text || 'lädt') + '</span>';
+        var a = upArt(u), cls = a === 'fehler' ? 'bad' : 'warn';
+        var st = a === 'ok' ? '<span class="chip ok">✓ ' + h(u.text || 'gelesen') + '</span>'
+          : a === 'laeuft' ? '<span class="mut"><span class="spin"></span> ' + h(u.text || 'lädt') + '</span>'
+          : a === 'wartet' ? '<span class="chip yel">' + h(u.text || 'wartet auf Netz') + '</span>'
+          : u.ziel ? '<button type="button" class="chip ' + cls + '" data-act="doppelt-zeigen" data-g="' + h(u.gruppe || '') + '" data-ziel="' + h(u.ziel) + '" title="Bestehenden Beleg ansehen">' + h(u.text) + ' · ansehen</button>'
+          : '<span class="chip ' + cls + '">' + (a === 'fehler' ? 'nicht hochgeladen: ' : '') + h(u.text) + '</span>';
         return '<div class="row"><span>' + (u.gruppe ? '<a href="#" data-act="beleg" data-g="' + u.gruppe + '">' + h(u.name) + '</a>' : h(u.name)) + '</span>' + st + '</div>';
       }).join('') + '</div></div>';
   }
@@ -127,30 +132,134 @@
     if (opt && opt.quelle === 'scan' || !n || /^(\d{8,}|IMG|image|photo|Foto|PXL|DSC)[\w-]*\.(jpe?g|png|heic|webp)$/i.test(n)) return 'Foto ' + new Date().toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
     return n;
   }
+  /* ---------- Rückmeldung beim Hochladen ----------
+     Eine Leiste unten (auf jeder Seite und auch über einem offenen Beleg): läuft · hat geklappt · was nicht ging und warum.
+     Bei Problemen bleibt sie stehen, bis man sie schließt. Ist die App im Hintergrund, kommt eine Mitteilung. */
+  S.upPanel = [];
+  var upTimer = null;
+  function upArt(u) { return u.art || (u.status === 'laedt' ? 'laeuft' : u.status === 'wartet' ? 'wartet' : u.status === 'fehler' ? 'fehler' : 'ok'); }
+  function upNeu(name) { var u = { name: name, status: 'laedt', text: 'wird hochgeladen' }; S.uploads.unshift(u); return u; }
+  function upStart(list) {
+    clearTimeout(upTimer);
+    /* offene Probleme vom letzten Mal bleiben stehen, Erledigtes geht weg */
+    S.upPanel = S.upPanel.filter(function (u) { var a = upArt(u); return a === 'laeuft' || a === 'fehler' || a === 'pruefen'; }).concat(list);
+    APP.upLeiste();
+  }
+  function upErgebnis(u, r) {
+    if (!r) { u.status = 'fertig'; u.art = 'ok'; return r; }
+    if (r.wartet) { u.status = 'wartet'; u.art = 'wartet'; u.text = r.grund || 'kein Netz · ist gespeichert und geht automatisch raus'; return r; }
+    if (r.abgelegt && r.r && r.r.schon) { u.gruppe = null; u.status = 'fehler'; u.art = 'schon'; u.text = 'schon abgelegt: ' + (r.abgelegt.stelle || 'Behörde') + ' – ' + (r.abgelegt.titel || ''); return r; }
+    if (r.abgelegt) { u.gruppe = null; u.status = 'fertig'; u.art = 'ok'; u.post = true; u.jahr = r.abgelegt.jahr; u.text = 'Post von ' + (r.abgelegt.stelle || 'Behörde') + ', bei den Unterlagen abgelegt'; return r; }
+    u.gruppe = r.gruppe; u.jahr = r.jahr; u.monat = r.monat;
+    if (r.leseFehler) { u.status = 'fehler'; u.art = 'pruefen'; u.text = r.leseFehler.length > 60 ? 'hochgeladen, aber nicht gelesen · bitte selbst ausfüllen' : r.leseFehler; return r; }
+    u.status = 'fertig'; u.art = 'ok'; u.auto = !!r.auto;
+    u.text = (r.lieferant || 'gelesen') + ' · ' + L.eur(r.brutto) + (r.verschoben ? ' · nach ' + r.verschoben : '') + (r.auto ? ' · bestätigt' : '');
+    if (r.r && r.r.doppelt) { u.status = 'fehler'; u.art = 'pruefen'; u.text = 'gibt es vermutlich schon: ' + r.r.doppelt; u.ziel = r.r.doppelt_gruppe || null; }
+    if (r.r && r.r.fremd) { u.status = 'fehler'; u.art = 'pruefen'; u.text = 'geht an ' + r.r.fremd + ', nicht an S1 Secure · zählt vorerst nicht mit'; }
+    return r;
+  }
+  function upFehler(u, e) {
+    u.status = 'fehler';
+    if (e && e.doppelt) { u.art = 'schon'; u.text = (e.message || 'gibt es schon').replace(/\.$/, ''); if (e.doppelt.gruppe) u.ziel = e.doppelt.gruppe; }
+    else { u.art = 'fehler'; u.text = APP.fehlerText(e); }
+  }
+  function upZahl(n, eins, mehr) { return n === 1 ? '1 ' + eins : n + ' ' + mehr; }
+  function upZusammen() {
+    var l = S.upPanel, n = { laeuft: 0, ok: 0, pruefen: 0, schon: 0, wartet: 0, fehler: 0 }, auto = 0;
+    l.forEach(function (u) { n[upArt(u)]++; if (u.auto) auto++; });
+    var hoch = n.ok + n.pruefen, z = { n: n, art: 'ok', kopf: '', sub: '' };
+    if (n.laeuft) {
+      var akt = l.filter(function (u) { return upArt(u) === 'laeuft'; })[0], fertig = l.length - n.laeuft;
+      var tun = /gelesen/.test(akt.text || '') ? 'gelesen' : 'hochgeladen';
+      z.art = 'run'; z.kopf = l.length === 1 ? 'Beleg wird ' + tun + ' …' : 'Beleg ' + (fertig + 1) + ' von ' + l.length + ' wird ' + tun + ' …'; z.sub = akt.name;
+      return z;
+    }
+    if (n.fehler) { z.art = 'bad'; z.kopf = upZahl(n.fehler, 'Beleg', 'Belege') + ' nicht hochgeladen'; if (hoch) z.sub = upZahl(hoch, 'anderer ist', 'andere sind') + ' hochgeladen.'; }
+    else if (!hoch && n.schon && !n.wartet) { z.art = 'warn'; z.kopf = n.schon === 1 ? 'Gibt es schon, nicht doppelt hochgeladen' : n.schon + ' gibt es schon, nicht doppelt hochgeladen'; }
+    else if (!hoch && n.wartet) { z.art = 'warn'; z.kopf = 'Noch nicht hochgeladen: ' + upZahl(n.wartet, 'Beleg wartet', 'Belege warten') + ' auf dem Gerät'; z.sub = 'Geht automatisch raus, sobald die Verbindung wieder da ist. Nichts geht verloren.'; }
+    else {
+      z.art = n.pruefen || n.schon || n.wartet ? 'warn' : 'ok';
+      var nurPost = hoch && l.every(function (u) { return u.post || upArt(u) !== 'ok'; });
+      z.kopf = nurPost ? 'Bei den Unterlagen abgelegt' : hoch === 1 ? 'Hochgeladen und gelesen' : hoch + ' Belege hochgeladen und gelesen';
+      if (n.pruefen) z.kopf += ' · ' + n.pruefen + ' bitte ansehen';
+      var ok1 = l.filter(function (u) { return upArt(u) === 'ok'; });
+      if (hoch === 1 && ok1.length === 1) z.sub = ok1[0].text || '';
+      else if (!n.pruefen && hoch > 1) z.sub = auto === hoch ? 'Alle automatisch bestätigt.' : auto ? auto + ' automatisch bestätigt, ' + (hoch - auto) + ' bitte prüfen und bestätigen.' : 'Bitte prüfen und bestätigen.';
+    }
+    return z;
+  }
+  APP.upLeiste = function () {
+    var box = APP.toastBox(); if (!box) return;
+    var el = box.querySelector('.t.up'), l = S.upPanel;
+    if (!l.length) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.setAttribute('role', 'status'); box.appendChild(el); }
+    var z = upZusammen();
+    el.className = 't up ' + z.art;
+    var probleme = z.art === 'run' ? [] : l.filter(function (u) { return upArt(u) !== 'ok'; });
+    var zeilen = probleme.slice(0, 4).map(function (u) {
+      var t = '<b>' + h(u.name) + '</b>: ' + h(u.text || '');
+      return '<li>' + (u.ziel ? '<button type="button" class="tl" data-act="doppelt-zeigen" data-g="' + h(u.gruppe || '') + '" data-ziel="' + h(u.ziel) + '">' + t + ' · ansehen</button>' : u.gruppe ? '<button type="button" class="tl" data-act="beleg" data-g="' + h(u.gruppe) + '">' + t + '</button>' : t) + '</li>';
+    }).join('') + (probleme.length > 4 ? '<li>und ' + (probleme.length - 4) + ' weitere</li>' : '');
+    el.innerHTML = (z.art === 'run' ? '<span class="spin" aria-hidden="true"></span>' : '<span class="ti" aria-hidden="true">' + (z.art === 'ok' ? '✓' : '!') + '</span>') +
+      '<div class="tx"><b>' + h(z.kopf) + '</b>' + (z.sub ? '<span class="s">' + h(z.sub) + '</span>' : '') + (zeilen ? '<ul>' + zeilen + '</ul>' : '') + '</div>' +
+      (z.art === 'run' ? '' : '<div class="knoepfe"><button type="button" class="tu" data-act="up-ansehen">Ansehen</button><button type="button" class="tz" data-act="up-zu" aria-label="Schließen">×</button></div>');
+  };
+  function upFertig() {
+    if (S.upPanel.some(function (u) { return upArt(u) === 'laeuft'; })) { APP.upLeiste(); return; }
+    APP.upLeiste();
+    var z = upZusammen();
+    clearTimeout(upTimer);
+    if (z.art === 'ok') upTimer = setTimeout(function () { S.upPanel = []; APP.upLeiste(); }, 9000);
+    try { if (navigator.vibrate) navigator.vibrate(z.art === 'ok' ? 40 : [90, 60, 90]); } catch (e) { /* egal */ }
+    /* App im Hintergrund (z. B. am Handy weggewechselt): Mitteilung, wenn sie erlaubt ist */
+    try {
+      if (document.hidden && window.Notification && Notification.permission === 'granted' && navigator.serviceWorker) {
+        navigator.serviceWorker.ready.then(function (reg) {
+          return reg.showNotification('S1 Tax · ' + z.kopf, { body: z.sub || '', tag: 's1tax-upload', icon: 'icon-192.png', badge: 'icon-192.png', data: { url: location.href.split('#')[0] + '#' + upZiel() } });
+        }).catch(function () {});
+      }
+    } catch (e) { /* egal */ }
+  }
+  function upZiel() {
+    var l = S.upPanel, mit = l.filter(function (u) { return u.jahr && u.monat; })[0], post = l.filter(function (u) { return u.post; })[0];
+    if (mit) return 'monat/' + mit.jahr + '-' + mit.monat;
+    if (post) return 'steuer';
+    return 'monat';
+  }
+  APP.A['up-zu'] = function () { clearTimeout(upTimer); S.upPanel = []; APP.upLeiste(); };
+  APP.A['up-ansehen'] = function () {
+    var l = S.upPanel, ziel = upZiel(), nur = l.length === 1 && l[0].gruppe ? l[0].gruppe : null;
+    clearTimeout(upTimer); S.upPanel = []; APP.upLeiste();
+    if (nur) { APP.belegDialog(nur); return; }
+    APP.schliessen(); APP.go(ziel);
+  };
+  /* Seite nicht schließen, solange noch etwas hochlädt */
+  window.addEventListener('beforeunload', function (e) {
+    if (!S.upPanel.some(function (u) { return upArt(u) === 'laeuft'; })) return;
+    e.preventDefault(); e.returnValue = 'Es wird noch hochgeladen.'; return e.returnValue;
+  });
+  APP.upNeu = upNeu; APP.upStart = upStart; APP.upErgebnis = upErgebnis; APP.upFehler = upFehler; APP.upFertig = upFertig;
+
   function hochladen(files, opt) {
     var x = APP.jm(S.view === 'monat' ? S.arg : '');
     var ziel = opt.heute ? { jahr: +L.heute().slice(0, 4), monat: +L.heute().slice(5, 7) } : x;
+    var alle = files.length;
     files = files.filter(function (f) { return /pdf|image/.test(f.type) || /\.(pdf|jpe?g|png|heic|webp)$/i.test(f.name); });
-    if (!files.length) { APP.toast('Bitte PDF-Dateien oder Fotos verwenden.', { bad: true }); return Promise.resolve(); }
-    var eintraege = files.map(function (f) { var u = { name: anzeigeName(f, opt), status: 'laedt', text: 'wird hochgeladen' }; S.uploads.unshift(u); return u; });
+    if (!files.length) { APP.toast(alle === 1 ? 'Nicht hochgeladen: Das ist kein PDF und kein Foto.' : 'Nicht hochgeladen: Bitte PDF-Dateien oder Fotos verwenden.', { bad: true }); return Promise.resolve([]); }
+    if (files.length < alle) APP.toast(upZahl(alle - files.length, 'Datei', 'Dateien') + ' übersprungen: nur PDFs und Fotos gehen.', { warn: true });
+    var eintraege = files.map(function (f) { return upNeu(anzeigeName(f, opt)); });
+    upStart(eintraege);
     APP.render();
     return files.reduce(function (p, f, i) {
       return p.then(function () {
         var u = eintraege[i];
-        u.text = 'wird gelesen'; APP.render();
-        return APP.belegAnlegen(f, Object.assign({ jahr: ziel.jahr, monat: ziel.monat }, opt)).then(function (r) {
-          if (r && r.wartet) { u.status = 'wartet'; return; }
-          if (r.abgelegt && r.r && r.r.schon) { u.gruppe = null; u.status = 'fehler'; u.text = 'schon abgelegt: ' + (r.abgelegt.stelle || 'Behörde') + ' – ' + (r.abgelegt.titel || ''); APP.toast(APP.postText(r.r)); return r; }
-          if (r.abgelegt) { u.gruppe = null; u.status = 'fertig'; u.text = 'Post von ' + (r.abgelegt.stelle || 'Behörde') + ', bei den Unterlagen abgelegt'; APP.toast(APP.postText(r.r)); return r; }
-          u.gruppe = r.gruppe;
-          if (r.leseFehler) { u.status = 'fehler'; u.text = r.leseFehler.length > 60 ? 'selbst ausfüllen' : r.leseFehler; return r; }
-          u.status = 'fertig'; u.text = (r.lieferant || 'gelesen') + ' · ' + L.eur(r.brutto) + (r.verschoben ? ' · nach ' + r.verschoben : '') + (r.auto ? ' · bestätigt' : '');
-          if (r.r && r.r.doppelt) { u.status = 'fehler'; u.text = 'gibt es vermutlich schon: ' + r.r.doppelt; u.ziel = r.r.doppelt_gruppe || null; }
-          if (r.r && r.r.fremd) { u.status = 'fehler'; u.text = 'geht an ' + r.r.fremd + ', nicht an S1 Secure'; APP.toast('Diese Rechnung geht an ' + r.r.fremd + ', nicht an S1 Secure. Sie zählt vorerst nicht mit.', { bad: true }); }
-          return r;
-        }).catch(function (e) { u.status = 'fehler'; u.text = e && e.message || String(e); if (e && e.doppelt && e.doppelt.gruppe) u.ziel = e.doppelt.gruppe; });
+        var schritt = function (t) { u.text = t; APP.upLeiste(); APP.render(); };
+        return APP.belegAnlegen(f, Object.assign({ jahr: ziel.jahr, monat: ziel.monat }, opt, { schritt: schritt }))
+          .then(function (r) { upErgebnis(u, r); return r; })
+          .catch(function (e) { upFehler(u, e); })
+          .then(function () { APP.upLeiste(); APP.render(); });
       });
-    }, Promise.resolve()).then(function () { APP.render(); });
+    }, Promise.resolve()).then(function () { APP.render(); upFertig(); return eintraege; });
   }
   APP.hochladenDateien = hochladen;
   APP.A.dateien = function () { var i = document.getElementById('f-belege'); i.value = ''; i.click(); };
@@ -165,13 +274,12 @@
       var zs = APP.zuschneiden && APP.zuschnittAn();
       var platz = zs ? { name: anzeigeName(f, { quelle: 'scan' }), status: 'laedt', text: 'wird zugeschnitten' } : null;
       if (platz) { S.uploads.unshift(platz); APP.render(); }
-      (zs ? APP.zuschneiden(f) : Promise.resolve({ datei: f })).then(function (z) {
+      (zs ? APP.zuschneiden(f).catch(function () { return { datei: f }; }) : Promise.resolve({ datei: f })).then(function (z) {
         if (platz) { var ix = S.uploads.indexOf(platz); if (ix >= 0) S.uploads.splice(ix, 1); }
         return hochladen([z.datei], { quelle: 'scan', zahlung: 'bar', heute: S.view !== 'monat' }).then(function () {
           var u = S.uploads[0];
           if (u && u.gruppe && z.zugeschnitten) { S.zuschnitt = S.zuschnitt || {}; S.zuschnitt[u.gruppe] = z.original; }
           if (u && u.gruppe) APP.belegDialog(u.gruppe, { nachScan: true });
-          else if (u && u.status === 'wartet') APP.toast('Kein Netz: Das Foto ist gespeichert und wird hochgeladen, sobald Netz da ist.');
         });
       });
     }
@@ -191,6 +299,7 @@
         var h0 = L.heute();
         location.replace('#monat/' + (+h0.slice(0, 4)) + '-' + (+h0.slice(5, 7)));
         if (files.length) hochladen(files, { quelle: 'upload', zahlung: 'bank', heute: true });
+        else APP.toast('Beim Teilen ist keine Datei angekommen. Bitte noch einmal teilen.', { bad: true });
       }).catch(function (e) { APP.fehler(e, 'Teilen'); APP.go('monat'); });
     }
   };
@@ -446,7 +555,7 @@
       return Promise.all(jobs).then(function () {
         if (st.bank) return APP.upd('bank', { id: st.bank.id }, { art: 'beleg', beleg_gruppe: gruppe });
       }).then(function () {
-        APP.schliessen(); APP.toast('Gespeichert.'); APP.render();
+        APP.schliessen(); APP.ok('Gespeichert.'); APP.render();
       });
     });
     });
@@ -465,7 +574,7 @@
       })).then(function () {
         var bk = D.bank.find(function (b) { return b.beleg_gruppe === g; });
         if (!zur && bk) return APP.upd('bank', { id: bk.id }, { art: 'offen', beleg_gruppe: null });
-      }).then(function () { APP.schliessen(); APP.toast(zur ? 'Wiederhergestellt.' : 'Storniert: ' + grund); APP.render(); });
+      }).then(function () { APP.schliessen(); APP.ok(zur ? 'Wiederhergestellt.' : 'Storniert: ' + grund); APP.render(); });
     }
     if (zur) { ausfuehren('').catch(APP.fehler); return; }
     APP.modal({
@@ -488,7 +597,7 @@
     APP.lauf(el, function () {
       return APP.belegLesen(row).then(function (r) {
         if (r.abgelegt) { APP.schliessen(); APP.toast(postText(r.r)); APP.render(); return; }
-        if (r.leseFehler) APP.toast(r.leseFehler, { bad: true }); else APP.toast('Neu gelesen.'); APP.belegDialog(g); APP.render();
+        if (r.leseFehler) APP.toast(r.leseFehler, { bad: true }); else APP.ok('Neu gelesen.'); APP.belegDialog(g); APP.render();
       });
     });
   };
@@ -521,7 +630,7 @@
         return APP.upd('belege', { id: b.id }, { storniert: true, notiz: 'Storniert: Gehört nicht zu S1 Secure (an ' + an + ')', lesung: Object.assign({}, b.lesung || {}, { weg: { grund: 'nicht an S1 Secure', am: new Date().toISOString(), von: APP.ich() } }) });
       })).then(function () { return fremdFragenErledigen(rows, 'Falsch hineingezogen, entfernt.'); }).then(function () {
         D.belege = D.belege.filter(function (b) { return b.gruppe !== g; });
-        S.uploads.forEach(function (u) { if (u.gruppe === g) { u.gruppe = null; u.status = 'fertig'; u.text = 'entfernt (nicht an S1 Secure)'; } });
+        S.uploads.forEach(function (u) { if (u.gruppe === g) { u.gruppe = null; u.status = 'fertig'; u.art = 'ok'; u.ziel = null; u.text = 'entfernt (nicht an S1 Secure)'; } }); APP.upLeiste();
         APP.schliessen(); APP.toast('Entfernt. Die Rechnung an ' + an + ' zählt nirgends mit.'); APP.render();
       });
     });
@@ -546,7 +655,7 @@
     var g = el.dataset.g;
     APP.bestaetigen('Das ist kein Beleg, sondern Post vom Amt (z. B. Bescheid oder Benachrichtigung)? Die Datei kommt zu den Unterlagen, der Beleg verschwindet.', 'Als Post ablegen').then(function (ok) {
       if (!ok) return;
-      return APP.alsPostAblegen(g).then(function (u) { APP.schliessen(); APP.toast('Bei den Unterlagen ' + u.jahr + ' abgelegt.'); APP.render(); });
+      return APP.alsPostAblegen(g).then(function (u) { APP.schliessen(); APP.ok('Bei den Unterlagen ' + u.jahr + ' abgelegt.'); APP.render(); });
     }).catch(APP.fehler);
   };
   APP.A['datei-ersetzen'] = function (el) {
@@ -573,7 +682,7 @@
     if (e.target.id !== 'f-ersetzen' || !e.target.files.length) return;
     var g = e.target.dataset.g, file = e.target.files[0];
     dateiErsetzen(g, file).then(function () {
-      APP.toast('Datei gespeichert. Die alte Datei bleibt im Archiv.');
+      APP.ok('Datei gespeichert. Die alte Datei bleibt im Archiv.');
       return APP.bestaetigen('Soll die App die neue Datei lesen und die Angaben vorschlagen?', 'Lesen').then(function (ok) { if (ok) return APP.belegLesen(D.belege.find(function (b) { return b.gruppe === g; })); });
     }).then(function () { APP.belegDialog(g); APP.render(); }).catch(function (e) { APP.fehler(e, 'Datei'); });
   });
@@ -614,7 +723,7 @@
     APP.lauf(el, function () {
       return APP.ins('fragen', [{ tabelle: el.dataset.t, datensatz: el.dataset.id, jahr: row.jahr || null, monat: row.monat || null, text: t.trim(), an: APP.ich() === 'j' ? 'd' : 'j' }]).then(function () {
         if (el.dataset.t === 'belege' && row.gruppe) return Promise.all(D.belege.filter(function (b) { return b.gruppe === row.gruppe && !b.storniert && b.status !== 'privat'; }).map(function (b) { return APP.upd('belege', { id: b.id }, { status: 'unklar' }); }));
-      }).then(function () { APP.toast('Frage gestellt. ' + (APP.ich() === 'j' ? 'Dagmar' : 'Jürgen') + ' bekommt eine Mitteilung.'); APP.fn('erinnerungen', {}, 'jetzt').catch(function () {}); if (row.gruppe) APP.belegDialog(row.gruppe); APP.render(); });
+      }).then(function () { APP.ok('Frage gestellt. ' + (APP.ich() === 'j' ? 'Dagmar' : 'Jürgen') + ' bekommt eine Mitteilung.'); APP.fn('erinnerungen', {}, 'jetzt').catch(function () {}); if (row.gruppe) APP.belegDialog(row.gruppe); APP.render(); });
     });
   };
   APP.A['frage-antworten'] = function (el) {
@@ -630,7 +739,7 @@
     if (!t) return;
     APP.lauf(el, function () {
       return APP.upd('fragen', { id: el.dataset.id }, { antwort: t, antwort_von: APP.ich(), antwort_am: new Date().toISOString(), erledigt: fertig }).then(function () {
-        APP.schliessen(); APP.toast('Antwort gespeichert.'); APP.fn('erinnerungen', {}, 'jetzt').catch(function () {}); APP.render();
+        APP.schliessen(); APP.ok('Antwort gespeichert.'); APP.fn('erinnerungen', {}, 'jetzt').catch(function () {}); APP.render();
       });
     });
   };
@@ -657,7 +766,7 @@
       return APP.lauf(el, function () {
         return Promise.all(warten.map(function (g) { return APP.upd('belege', { gruppe: g.gruppe }, { jahr: nj, monat: nm }); })).then(function () {
           return APP.rpc('monat_abschliessen', { p_jahr: j, p_monat: m });
-        }).then(function (n) { return APP.laden().then(function () { APP.toast(n + ' Belegnummern vergeben.'); APP.render(); }); });
+        }).then(function (n) { return APP.laden().then(function () { APP.ok(n + ' Belegnummern vergeben.'); APP.render(); }); });
       });
     });
   };
@@ -667,7 +776,7 @@
     APP.lauf(el, function () {
       var mo = L.monat(D, j, m);
       return (mo ? APP.upd('monate', { jahr: j, monat: m }, patch) : APP.ins('monate', [patch])).then(function () {
-        APP.toast(aus ? 'Prüfung zurückgenommen.' : L.MONATE[m] + ' als geprüft markiert.'); APP.fn('erinnerungen', {}, 'jetzt').catch(function () {}); APP.render();
+        APP.ok(aus ? 'Prüfung zurückgenommen.' : L.MONATE[m] + ' als geprüft markiert.'); APP.fn('erinnerungen', {}, 'jetzt').catch(function () {}); APP.render();
       });
     });
   };

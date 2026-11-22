@@ -1,0 +1,8 @@
+# Nie ins öffentliche Repo: Belege, Auszüge, Exporte, Testdaten
+*.pdf
+*.xlsx
+*.xls
+*.csv
+*.json
+!manifest.webmanifest
+test/

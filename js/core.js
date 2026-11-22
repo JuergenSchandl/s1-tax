@@ -6,7 +6,7 @@
   var CFG = window.S1_CONFIG || {};
   var L = window.L;
   var APP = window.APP = {
-    VERSION: '2026.11.22a',
+    VERSION: '2026.11.22b',
     CFG: CFG,
     sb: null,
     D: { belege: [], bank: [], ausgang: [], kunden: [], monate: [], einst: {}, fragen: [], hinweise: {}, members: [] },
@@ -50,22 +50,57 @@
   APP.name = function (p) { var m = D.members.find(function (x) { return x.person === p; }); return m ? m.name : p === 'j' ? 'Jürgen' : p === 'd' ? 'Dagmar' : p === 'app' ? 'App' : p || ''; };
 
   /* ---------- Meldungen ---------- */
+  /* Meldungen liegen bei offenem Dialog im Dialog, sonst wären sie hinter dem Dialog verdeckt (am Handy ganz unsichtbar) */
+  var TOAST = null;
+  APP.toastBox = function () {
+    var box = TOAST || (TOAST = document.getElementById('toast'));
+    var d = document.getElementById('dlg'), host = d && d.open ? d : document.body;
+    if (box && box.parentNode !== host) host.appendChild(box);
+    return box;
+  };
+  /* opt.ok: grün mit Haken (hat geklappt) · opt.bad: rot, bleibt länger und hat ein × · opt.warn: orange */
   APP.toast = function (msg, opt) {
     opt = opt || {};
-    var box = document.getElementById('toast'), t = document.createElement('div');
-    t.className = 't' + (opt.bad ? ' bad' : '');
-    t.innerHTML = '<span>' + APP.h(msg) + '</span>' + (opt.undo ? '<button type="button">Rückgängig</button>' : '');
-    if (opt.undo) t.querySelector('button').onclick = function () { t.remove(); opt.undo(); };
+    var box = APP.toastBox(); if (!box) return;
+    var art = opt.bad ? 'bad' : opt.ok ? 'ok' : opt.warn ? 'warn' : '', zu = opt.bad || opt.warn || opt.zu;
+    Array.prototype.slice.call(box.querySelectorAll('.t:not(.up)')).forEach(function (x) { if (x.dataset.msg === msg) x.remove(); });
+    var t = document.createElement('div');
+    t.className = 't' + (art ? ' ' + art : '');
+    t.dataset.msg = msg;
+    if (opt.bad) t.setAttribute('role', 'alert');
+    t.innerHTML = (art ? '<span class="ti" aria-hidden="true">' + (art === 'ok' ? '✓' : '!') + '</span>' : '') + '<span class="tx">' + APP.h(msg) + '</span>' +
+      (opt.undo ? '<button type="button" class="tu">Rückgängig</button>' : '') + (zu ? '<button type="button" class="tz" aria-label="Schließen">×</button>' : '');
+    if (opt.undo) t.querySelector('.tu').onclick = function () { t.remove(); opt.undo(); };
+    if (zu) t.querySelector('.tz').onclick = function () { t.remove(); };
     box.appendChild(t);
-    setTimeout(function () { t.remove(); }, opt.ms || (opt.undo ? 7000 : opt.bad ? 6000 : 3200));
+    setTimeout(function () { t.remove(); }, opt.ms || (opt.undo ? 7000 : opt.bad ? 12000 : opt.warn ? 9000 : opt.ok ? 4500 : 3500));
+  };
+  APP.ok = function (msg, opt) { APP.toast(msg, Object.assign({ ok: true }, opt || {})); };
+  APP.netzFehler = function (e) { var m = e && (e.message || e.msg || e.error) || String(e || ''); return /Failed to fetch|NetworkError|Load failed|Network request failed|ERR_INTERNET|ERR_NETWORK|timed? ?out/i.test(m); };
+  APP.fehlerText = function (e) {
+    var m = e && (e.message || e.msg || e.error_description || e.error) || String(e || 'Unbekannter Fehler');
+    if (typeof m !== 'string') m = JSON.stringify(m);
+    if (APP.netzFehler(e)) m = 'Keine Verbindung. Bitte Internet prüfen.';
+    else if (/JWT|session|not authenticated/i.test(m)) m = 'Die Anmeldung ist abgelaufen. Bitte neu anmelden.';
+    else if (/permission denied|row-level security|violates/i.test(m)) m = 'Das darf die App so nicht speichern (' + m + ').';
+    else if (/Payload too large|exceeded the maximum allowed size|413/i.test(m)) m = 'Die Datei ist zu groß.';
+    return m;
   };
   APP.fehler = function (e, was) {
-    var m = e && (e.message || e.msg || e.error_description || e.error) || String(e || 'Unbekannter Fehler');
-    if (/Failed to fetch|NetworkError|Load failed/i.test(m)) m = 'Keine Verbindung. Bitte Internet prüfen.';
-    if (/JWT|session|not authenticated/i.test(m)) m = 'Die Anmeldung ist abgelaufen. Bitte neu anmelden.';
     if (window.console) console.error(was || 'Fehler', e);
-    APP.toast((was ? was + ': ' : '') + m, { bad: true });
+    APP.toast((was ? was + ': ' : 'Nicht ausgeführt: ') + APP.fehlerText(e), { bad: true });
   };
+  /* Unerwartete Fehler nie still schlucken: als rote Meldung zeigen */
+  window.addEventListener('error', function (e) {
+    if (!e || !e.message || /ResizeObserver|Script error/i.test(e.message)) return;
+    if (e.filename && e.filename.indexOf(location.origin) !== 0) return;
+    APP.fehler(e.error || e.message);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e && e.reason;
+    if (!r || r.name === 'AbortError' || r.name === 'NotAllowedError') return;
+    APP.fehler(r);
+  });
 
   /* ---------- Dialoge ---------- */
   var dlg = function () { return document.getElementById('dlg'); };
@@ -76,13 +111,14 @@
     d.style.width = o.wide ? 'min(1080px, calc(100vw - 24px))' : '';
     d._onClose = o.onClose || null;
     if (!d.open) { try { d.showModal(); } catch (e) { d.setAttribute('open', ''); } }
+    APP.toastBox();
     d.scrollTop = 0;
     var f = d.querySelector('[autofocus]'); if (f) setTimeout(function () { f.focus(); }, 30);
     return d;
   };
   APP.schliessen = function () { var d = dlg(); if (d.open) d.close(); };
   document.addEventListener('DOMContentLoaded', function () {
-    dlg().addEventListener('close', function () { var d = dlg(), f = d._onClose; d._onClose = null; d.innerHTML = ''; if (f) f(); });
+    dlg().addEventListener('close', function () { var d = dlg(), f = d._onClose; d._onClose = null; d.innerHTML = ''; APP.toastBox(); if (f) f(); });
     dlg().addEventListener('click', function (e) { if (e.target === dlg()) APP.schliessen(); });
   });
   APP.bestaetigen = function (text, ok, opt) {

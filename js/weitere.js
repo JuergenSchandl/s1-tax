@@ -195,7 +195,7 @@
           return APP.einstellung('unterlagen', (D.einst.unterlagen || []).concat(neu));
         }).then(function () {
           var k = neu.filter(function (u) { return u.kest; })[0];
-          APP.toast(k && k.kest.ohneAusgleich && k.kest.zuViel > 1 ? 'KESt-Aufstellung gespeichert. Bei diesem Depot gab es keinen Verlustausgleich.' : neu.length === 1 ? 'Unterlage gespeichert.' : neu.length + ' Unterlagen gespeichert.');
+          APP.ok(k && k.kest.ohneAusgleich && k.kest.zuViel > 1 ? 'KESt-Aufstellung gespeichert. Bei diesem Depot gab es keinen Verlustausgleich.' : neu.length === 1 ? 'Unterlage gespeichert.' : neu.length + ' Unterlagen gespeichert.');
           APP.render();
         });
       });
@@ -317,9 +317,9 @@
     var v = APP.formDaten(document.getElementById('firma')), f = Object.assign({}, D.einst.firma || {}, v);
     f.iban = String(f.iban || '').replace(/\s+/g, '').toUpperCase().replace(/(.{4})/g, '$1 ').trim();
     if (f.iban && !/^[A-Z]{2}\d{2}[A-Z0-9 ]{10,32}$/.test(f.iban)) { APP.toast('Die IBAN sieht nicht richtig aus.', { bad: true }); return; }
-    APP.lauf(el, function () { return APP.einstellung('firma', f).then(function () { APP.toast('Gespeichert.'); APP.render(); }); });
+    APP.lauf(el, function () { return APP.einstellung('firma', f).then(function () { APP.ok('Gespeichert.'); APP.render(); }); });
   };
-  APP.A['ordner-waehlen'] = function () { APP.ordnerWaehlen().then(function () { APP.toast('Ordner gewählt. Die erste Sicherung läuft …'); return APP.sichern(false); }).catch(function (e) { if (e && e.name !== 'AbortError') APP.fehler(e, 'Ordner'); }); };
+  APP.A['ordner-waehlen'] = function () { APP.ordnerWaehlen().then(function () { APP.ok('Ordner gewählt. Die erste Sicherung läuft …'); return APP.sichern(false); }).catch(function (e) { if (e && e.name !== 'AbortError') APP.fehler(e, 'Ordner'); }); };
   APP.A.sichern = function () { APP.sichern(false); };
   APP.A['daten-export'] = function () { APP.speichernUnter(APP.datenExport(), 'S1-Tax-Daten-' + L.heute() + '.json'); };
   /* Selbstprüfung: was die App gegeneinander prüft und was ihr auffällt */
@@ -355,7 +355,7 @@
       var ab = v.ab ? L.isoAus(v.ab) : null;
       if (v.ab && !ab) { APP.toast('Bitte das Datum als TT.MM.JJJJ eingeben.', { bad: true }); return; }
       var neu = { id: APP.uuid(), lieferant: v.lieferant.trim(), nur: (v.nur || '').trim() || null, text: (v.text || '').trim() || null, ab: ab, am: L.heute(), von: APP.ich() };
-      APP.lauf(ok, function () { return APP.einstellung('regeln', (D.einst.regeln || []).concat([neu])).then(function () { APP.schliessen(); APP.toast('Regel gespeichert.'); APP.render(); }); });
+      APP.lauf(ok, function () { return APP.einstellung('regeln', (D.einst.regeln || []).concat([neu])).then(function () { APP.schliessen(); APP.ok('Regel gespeichert.'); APP.render(); }); });
     };
   };
   APP.A['regel-weg'] = function (el) {

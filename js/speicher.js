@@ -68,17 +68,26 @@
         var e2 = new Error(weg.post ? 'Schon bei den Unterlagen abgelegt' + (u ? ': ' + (u.stelle || '') + ' – ' + (u.titel || u.name) : '') + '.' : weg.grund === 'nicht an S1 Secure' ? 'Diese Rechnung wurde schon entfernt, weil sie nicht an S1 Secure geht.' : 'Diesen Beleg gibt es schon.');
         e2.doppelt = true; throw e2;
       }
-      if (!navigator.onLine) {
+      /* ohne Netz oder wenn die Verbindung beim Hochladen abreißt: auf dem Gerät aufheben, später automatisch nachholen */
+      var aufheben = function (grund) {
         return APP.idb.put('warteschlange', { id: APP.uuid(), blob: blob, name: file.name || 'Foto.jpg', type: blob.type, jahr: jahr, monat: monat, zahlung: opt.zahlung || 'bar', quelle: opt.quelle || 'scan', created: Date.now() })
-          .then(function () { return zaehleWarteschlange(); }).then(function () { return { wartet: true }; });
-      }
+          .then(function () { return zaehleWarteschlange(); }).then(function () {
+            if (navigator.onLine) { clearTimeout(APP._nachholen); APP._nachholen = setTimeout(function () { APP.warteschlangeSenden(); }, 60000); }
+            return { wartet: true, grund: grund };
+          });
+      };
+      if (!navigator.onLine && !opt.bank) return aufheben('kein Netz · ist gespeichert und geht automatisch raus');
       var path = jahr + '/' + L.p2(monat) + '/' + APP.uuid() + '.' + endung(blob, file.name);
       return APP.hochladen('belege', path, blob).then(function () {
-        return APP.ins('belege', [{ jahr: jahr, monat: monat, gruppe: APP.uuid(), datei: path, quelle: opt.quelle || 'upload', zahlung: opt.zahlung || 'bank', status: 'geschaeftlich', bestaetigt: false, lesung: { hash: hash, dateiname: file.name || null } }]);
-      }).then(function (rows) {
-        var row = rows[0];
-        var link = opt.bank ? APP.upd('bank', { id: opt.bank.id }, { art: 'beleg', beleg_gruppe: row.gruppe }) : Promise.resolve();
-        return link.then(function () { return opt.lesen === false ? row : APP.belegLesen(row, opt.bank); });
+        return APP.ins('belege', [{ jahr: jahr, monat: monat, gruppe: APP.uuid(), datei: path, quelle: opt.quelle || 'upload', zahlung: opt.zahlung || 'bank', status: 'geschaeftlich', bestaetigt: false, lesung: { hash: hash, dateiname: file.name || null } }]).then(function (rows) {
+          var row = rows[0];
+          if (opt.schritt) opt.schritt('wird gelesen');
+          var link = opt.bank ? APP.upd('bank', { id: opt.bank.id }, { art: 'beleg', beleg_gruppe: row.gruppe }) : Promise.resolve();
+          return link.then(function () { return opt.lesen === false ? row : APP.belegLesen(row, opt.bank); });
+        });
+      }, function (e) {
+        if (!opt.ausWarteschlange && !opt.bank && APP.netzFehler(e)) return aufheben('Verbindung abgerissen · ist gespeichert, nächster Versuch in einer Minute');
+        throw e;
       });
     });
   };
@@ -162,16 +171,23 @@
     if (!navigator.onLine || !S.me || APP._sendet) return Promise.resolve();
     APP._sendet = true;
     return zaehleWarteschlange().then(function (list) {
-      var n = 0;
-      return list.reduce(function (p, it) {
+      if (!list.length) return;
+      var ein = list.map(function (it) { return APP.upNeu(/^Foto\.jpg$/.test(it.name) ? 'Foto (ohne Netz aufgenommen)' : it.name); });
+      APP.upStart(ein);
+      return list.reduce(function (p, it, i) {
         return p.then(function () {
-          var file = new File([it.blob], it.name, { type: it.type });
-          return APP.belegAnlegen(file, { jahr: it.jahr, monat: it.monat, zahlung: it.zahlung, quelle: it.quelle })
-            .then(function () { n++; return APP.idb.del('warteschlange', it.id); })
-            .catch(function (e) { if (e && e.doppelt) return APP.idb.del('warteschlange', it.id); throw e; });
+          var file = new File([it.blob], it.name, { type: it.type }), u = ein[i];
+          return APP.belegAnlegen(file, { jahr: it.jahr, monat: it.monat, zahlung: it.zahlung, quelle: it.quelle, ausWarteschlange: true, schritt: function (t) { u.text = t; APP.upLeiste(); } })
+            .then(function (r) { APP.upErgebnis(u, r); return APP.idb.del('warteschlange', it.id); })
+            .catch(function (e) {
+              if (e && e.doppelt) { APP.upFehler(u, e); return APP.idb.del('warteschlange', it.id); }
+              /* bleibt auf dem Gerät, nächster Versuch beim nächsten Start oder wenn das Netz zurück ist */
+              u.status = 'wartet'; u.art = 'wartet'; u.text = 'noch nicht hochgeladen (' + APP.fehlerText(e) + ') · bleibt gespeichert';
+            })
+            .then(function () { APP.upLeiste(); });
         });
-      }, Promise.resolve()).then(function () { if (n) APP.toast(n + (n === 1 ? ' Beleg' : ' Belege') + ' nachträglich hochgeladen.'); });
-    }).catch(function (e) { APP.fehler(e, 'Hochladen'); }).then(function () { APP._sendet = false; return zaehleWarteschlange(); }).then(function () { APP.render(); });
+      }, Promise.resolve()).then(function () { APP.upFertig(); });
+    }).catch(function (e) { APP.fehler(e, 'Nachholen'); }).then(function () { APP._sendet = false; return zaehleWarteschlange(); }).then(function () { APP.render(); });
   };
   window.addEventListener('online', function () { S.online = true; APP.warteschlangeSenden(); if (S.me) APP.laden().then(APP.render, function () {}); });
   window.addEventListener('offline', function () { S.online = false; if (S.me) APP.render(); });
@@ -266,9 +282,13 @@
         localStorage.setItem('s1tax:sicherung-log', JSON.stringify(log));
         o.letzte = { zeit: new Date().toISOString(), neu: neu, ordner: o.handle.name };
         localStorage.setItem('s1tax:sicherung', JSON.stringify(o.letzte));
-        if (!still) APP.toast('Gesichert: ' + (neu ? neu + ' neue Datei' + (neu === 1 ? '' : 'en') + ', ' : '') + 'Excel-Dateien aktualisiert.');
+        if (!still) APP.ok('Gesichert: ' + (neu ? neu + ' neue Datei' + (neu === 1 ? '' : 'en') + ', ' : '') + 'Excel-Dateien aktualisiert.');
       });
-    }).catch(function (e) { if (!still) APP.fehler(e, 'Sicherung'); }).then(function () { o.laeuft = false; if (!still) APP.render(); });
+    }).catch(function (e) {
+      /* auch die automatische Sicherung meldet, wenn sie nicht geklappt hat */
+      if (!still) APP.fehler(e, 'Sicherung');
+      else { if (window.console) console.error('Sicherung', e); APP.toast('Die automatische Sicherung in den Ordner hat nicht geklappt: ' + APP.fehlerText(e), { warn: true }); }
+    }).then(function () { o.laeuft = false; if (!still) APP.render(); });
   };
 
   APP.datenExport = function () {
@@ -322,7 +342,7 @@
     }).then(function (s) {
       schritt('Schritt 3 von 3: wird gespeichert …');
       return abo(s).catch(function (e) { s.unsubscribe(); throw e; });
-    }).then(function () { push.on = true; push.step = ''; push.busy = false; APP.toast('Mitteilungen sind eingeschaltet.'); APP.render(); })
+    }).then(function () { push.on = true; push.step = ''; push.busy = false; APP.ok('Mitteilungen sind eingeschaltet.'); APP.render(); })
       .catch(function (e) { push.step = ''; push.busy = false; push.err = e && e.message || String(e); APP.render(); });
   };
   APP.pushAus = function (still) {

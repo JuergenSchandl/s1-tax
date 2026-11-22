@@ -85,7 +85,7 @@
     var v = APP.formDaten(document.getElementById('kf'));
     if (!v.kurz.trim()) { APP.toast('Bitte einen Kurznamen eintragen.', { bad: true }); return; }
     var row = { kurz: v.kurz.trim(), name1: v.name1, name2: v.name2, strasse: v.strasse, ort: v.ort, mail: v.mail.trim(), bestellnr: v.bestellnr, ansprech: v.ansprech, uid: v.uid.replace(/\s/g, '').toUpperCase(), ziel: Number(v.ziel) || 14, aktiv: !!v.aktiv };
-    APP.lauf(el, function () { return (el.dataset.id ? APP.upd('kunden', { id: el.dataset.id }, row) : APP.ins('kunden', [row])).then(function () { APP.schliessen(); APP.toast('Kunde gespeichert.'); APP.render(); }); });
+    APP.lauf(el, function () { return (el.dataset.id ? APP.upd('kunden', { id: el.dataset.id }, row) : APP.ins('kunden', [row])).then(function () { APP.schliessen(); APP.ok('Kunde gespeichert.'); APP.render(); }); });
   };
 
   /* ---------- Rechnung schreiben ---------- */
@@ -241,7 +241,7 @@
   }
   APP.A['re-entwurf'] = function (el) {
     var st = fuellen(S.re), d = pruefen(st, false); if (!d) return;
-    APP.lauf(el, function () { return speichernEntwurf(st, d).then(function (a) { APP.toast('Entwurf gespeichert.'); S.re = null; APP.go('rechnung/' + a.id); }); });
+    APP.lauf(el, function () { return speichernEntwurf(st, d).then(function (a) { APP.ok('Entwurf gespeichert.'); S.re = null; APP.go('rechnung/' + a.id); }); });
   };
   APP.A['re-entwurf-weg'] = function () {
     APP.bestaetigen('Den Entwurf löschen? Er hat noch keine Nummer, es entsteht keine Lücke.', 'Löschen', { danger: true }).then(function (ok) {
@@ -281,7 +281,7 @@
             return APP.hochladen('rechnungen', path, blob, 'application/pdf').then(function () { return APP.upd('ausgang', { id: a.id }, { datei: path }); }).then(function () { return { a: a, blob: blob }; });
           });
         }).then(function (x) {
-          S.re = null; APP.toast('Rechnung ' + x.a.nr + ' ausgestellt.');
+          S.re = null; APP.ok('Rechnung ' + x.a.nr + ' ausgestellt.');
           APP.go('rechnung/' + x.a.id);
           setTimeout(function () { sendenDialog(D.ausgang.find(function (y) { return y.id === x.a.id; }), x.blob); }, 200);
         });
@@ -317,7 +317,7 @@
     i.onchange = function () {
       if (!i.files.length) return;
       var path = a.jahr + '/Re_' + String(a.nr).replace('/', '-') + '_' + a.kunde.replace(/[^\wÄÖÜäöüß.-]+/g, '-') + '_' + Date.now().toString(36) + '.pdf';
-      APP.hochladen('rechnungen', path, i.files[0], 'application/pdf').then(function () { return APP.upd('ausgang', { id: a.id }, { datei: path }); }).then(function () { APP.toast('PDF abgelegt.'); APP.render(); }).catch(APP.fehler);
+      APP.hochladen('rechnungen', path, i.files[0], 'application/pdf').then(function () { return APP.upd('ausgang', { id: a.id }, { datei: path }); }).then(function () { APP.ok('PDF abgelegt.'); APP.render(); }).catch(APP.fehler);
     };
     i.click();
   };
@@ -374,7 +374,7 @@
     document.getElementById('bz-ok').onclick = function () {
       var d = L.isoAus(document.getElementById('bz-d').value), b = L.parse(document.getElementById('bz-b').value);
       if (!d || !isFinite(b)) { APP.toast('Bitte Datum und Betrag prüfen.', { bad: true }); return; }
-      APP.upd('ausgang', { id: a.id }, { bezahlt_am: d, bezahlt_betrag: L.r2(b) }).then(function () { APP.schliessen(); APP.toast('Zahlung eingetragen.'); APP.render(); }).catch(APP.fehler);
+      APP.upd('ausgang', { id: a.id }, { bezahlt_am: d, bezahlt_betrag: L.r2(b) }).then(function () { APP.schliessen(); APP.ok('Zahlung eingetragen.'); APP.render(); }).catch(APP.fehler);
     };
   };
   APP.A['re-storno'] = function (el) {
