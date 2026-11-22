@@ -182,7 +182,7 @@
   /* ---------- Umsatzsteuer (Istbesteuerung) ---------- */
   L.istAb = function (D) { return (D.einst.steuer && D.einst.steuer.ist_ab) || '2026-01-01'; };
   L.uva = function (D, j, m) {
-    var istAb = L.istAb(D), r = { jahr: j, monat: m, umsaetze: [], vst: [], rc: [], ig: [], unklar: [], ohne: [] };
+    var istAb = L.istAb(D), warte = L.wartend(D), r = { jahr: j, monat: m, umsaetze: [], vst: [], rc: [], ig: [], unklar: [], ohne: [], wartet: [] };
     var k000 = 0, ust = 0;
     D.ausgang.forEach(function (a) {
       if (!L.ausgestellt(a) || !L.imMonat(a.bezahlt_am, j, m) || a.datum < istAb) return;
@@ -191,6 +191,7 @@
     var k060 = 0, k057 = 0, k066 = 0, k070 = 0, k072 = 0, k065 = 0;
     D.belege.forEach(function (b) {
       if (b.jahr !== j || b.monat !== m || !L.zaehlt(b)) return;
+      if (warte[b.gruppe]) { r.wartet.push(b); return; } /* noch nicht bezahlt: zählt im Monat der Zahlung */
       if (b.status === 'unklar') r.unklar.push(b);
       var satz = b.steuersatz === null || b.steuersatz === undefined || b.steuerart !== 'vst' ? 20 : L.n(b.steuersatz);
       if (b.steuerart === 'vst') { k060 += L.n(b.ust); r.vst.push(b); }
@@ -381,6 +382,20 @@
   };
 
   /* ---------- Bankabgleich ---------- */
+  /* Rechnung noch nicht bezahlt: Der Kontoauszug des Monats ist eingelesen, aber keine Zahlung dazu da.
+     Istbesteuerung (Umsatz unter 2 Mio.): Vorsteuer erst mit der Zahlung (§ 12 Abs. 1 Z 1 UStG), Ausgabe ebenso (§ 19 EStG).
+     Die Rechnung zählt deshalb erst im Monat der Zahlung, so wie bisher bei der CNC. */
+  L.monatsEnde = function (j, m) { return j + '-' + L.p2(m) + '-' + L.p2(new Date(Date.UTC(j, m, 0)).getUTCDate()); };
+  L.wartend = function (D) {
+    var bis = L.bankBis(D), v = L.verknuepft(D), out = {};
+    if (!bis) return out;
+    D.belege.forEach(function (b) {
+      if (out[b.gruppe] || b.storniert || b.nr || b.zahlung !== 'bank' || b.status === 'privat' || b.quelle === 'import') return;
+      if (v.gruppe[b.gruppe] || bis < L.monatsEnde(b.jahr, b.monat)) return;
+      out[b.gruppe] = true;
+    });
+    return out;
+  };
   L.verknuepft = function (D) {
     var g = {}, a = {};
     D.bank.forEach(function (b) { if (b.beleg_gruppe) g[b.beleg_gruppe] = b; if (b.ausgang_id) a[b.ausgang_id] = b; });
@@ -398,7 +413,8 @@
         var gleich = Math.abs(g.brutto - amt) < 0.005, name = L.aehnlich(bk.name + ' ' + bk.info, g.lieferant + ' ' + g.text);
         var score = (gleich ? 100 : Math.abs(g.brutto - amt) < Math.max(1, amt * 0.05) ? 30 : 0) + (name ? 40 : 0) - Math.abs(dm) * 10 - Math.min(tage, 30);
         var bar = g.zahlung === 'bar';
-        if (!alle && (!gleich || Math.abs(dm) > 1 || tage > 12)) return;
+        var spaeter = gleich && name && g.zahlung === 'bank' && g.datum && bk.datum >= g.datum && L.tageBis(bk.datum, g.datum) <= 75 && dm <= 0 && dm >= -3;
+        if (!alle && (!gleich || Math.abs(dm) > 1 || tage > 12) && !spaeter) return;
         if (!alle && bar && (!name || tage > 5)) return;
         if (alle && score < 0 && !name && !gleich) return;
         out.push({ art: 'beleg', g: g, gleich: gleich, name: name, bar: bar, score: score - (bar ? 15 : 0) });
@@ -539,7 +555,8 @@
   };
   L.monatsExcel = function (D, j, m) {
     var auszug = 'Kontoauszug N26/' + L.p2(m) + '-' + j;
-    var gr = L.gruppen(D.belege, function (b) { return b.jahr === j && b.monat === m && L.zaehlt(b); }).sort(L.sortBelege);
+    var warte = L.wartend(D);
+    var gr = L.gruppen(D.belege, function (b) { return b.jahr === j && b.monat === m && L.zaehlt(b) && !warte[b.gruppe]; }).sort(L.sortBelege);
     var rows = [['Datum', 'Name', '', 'Bezeichnung', 'Konto', 'Brutto-Betrag', 'Netto-Betrag', 'Steuer', 'Art', 'Nr', 'Hinweis']];
     rows[0] = rows[0].map(function (h, i) { return i === 0 ? { v: h, s: 'datum' } : h; });
     gr.forEach(function (g) {
@@ -662,6 +679,11 @@
       if (b.steuerart === 'vst' && b.quelle !== 'import' && [20, 13, 10].indexOf(L.n(b.steuersatz)) >= 0 && Math.abs(us - L.r2(ne * L.n(b.steuersatz) / 100)) > 0.03) add('warn', 'Beleg', wo + ': Vorsteuer passt nicht zu ' + L.n(b.steuersatz) + ' %', z);
       if (!b.konto && b.status !== 'privat' && b.bestaetigt) add('warn', 'Beleg', wo + ': kein Konto', z);
       if (Number(b.konto) === 7652 && b.quelle !== 'import' && b.status !== 'privat' && b.bestaetigt && !(b.bewirtung && b.bewirtung.mit)) add('warn', 'Bewirtung', wo + ': nicht eingetragen, mit wem', z);
+    });
+    /* Rechnungen, die schon lange auf die Zahlung warten */
+    var wt = L.wartend(D);
+    L.gruppen(D.belege, function (b) { return wt[b.gruppe]; }).forEach(function (g) {
+      if (g.datum && L.tageBis(heute, g.datum) > 45) add('info', 'Zahlung', (g.lieferant || 'Rechnung') + ' vom ' + L.datum(g.datum) + ' über ' + L.eur(g.brutto) + ': laut Kontoauszug noch nicht bezahlt', 'monat:' + g.jahr + '-' + g.monat);
     });
     /* 3. Belegnummern lückenlos */
     [j0, j0 + 1].forEach(function (jj) {

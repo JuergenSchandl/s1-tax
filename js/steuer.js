@@ -48,6 +48,7 @@
     if (neu) warn.push(neu + ' Beleg(e) noch nicht bestätigt.');
     if (bank) warn.push(bank + ' Bankbuchung(en) ohne Beleg.');
     if (u.unklar.length) warn.push(u.unklar.length + ' Belegzeile(n) unklar, sind vorläufig mitgerechnet.');
+    if (u.wartet.length) warn.push(L.gruppen(u.wartet).map(function (g) { return (g.lieferant || 'Rechnung') + ' ' + L.eur(g.brutto); }).join(', ') + ': noch nicht bezahlt, zählt erst im Monat der Zahlung.');
     var kz = KZ.map(function (k) {
       var v = u.kz[k[0]];
       if (!v && ['057', '070', '072', '065', '066'].indexOf(k[0]) >= 0) return '';

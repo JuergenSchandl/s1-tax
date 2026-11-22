@@ -28,6 +28,7 @@
     if (g.status === 'privat') return '<span class="chip">privat</span>';
     if (g.status === 'unklar') return '<span class="chip warn">unklar</span>';
     if (g.privat) return '<span class="chip">davon privat ' + L.fmt(g.privat) + '</span>';
+    if (L.wartend(D)[g.gruppe]) return '<span class="chip yel" title="Zählt erst im Monat der Zahlung">noch nicht bezahlt</span>';
     return '';
   }
   APP.belegStatusChip = statusChip;
@@ -322,7 +323,7 @@
       (!neu ? lesungHinweis(g) : '') +
       (!g.storniert ? bewirtungBlock(g, rows) : '') +
       '<div class="cols"><div class="narrow" style="flex-basis:340px">' + (neu ? '<div class="note">Für Belege ohne Datei, z. B. wenn der Kontoauszug als Beleg reicht. Foto oder PDF kannst du danach hinzufügen.</div>' : dateiVorschau(g)) +
-      (bk ? '<div class="note ok" style="margin-top:8px">Mit dem Konto verbunden: ' + L.datum(bk.datum) + ' · ' + h(bk.name) + ' · ' + L.eur(bk.betrag) + '</div>' : (!neu && g.zahlung === 'bank' ? '<div class="note" style="margin-top:8px">Noch keiner Bankbuchung zugeordnet.</div>' : '')) +
+      (bk ? '<div class="note ok" style="margin-top:8px">Mit dem Konto verbunden: ' + L.datum(bk.datum) + ' · ' + h(bk.name) + ' · ' + L.eur(bk.betrag) + '</div>' : (!neu && g.zahlung === 'bank' ? (L.wartend(D)[g.gruppe] ? '<div class="note yel" style="margin-top:8px"><b>Noch nicht bezahlt</b> (Kontoauszug bis ' + L.datum(L.bankBis(D)) + '). Die Rechnung zählt erst im Monat der Zahlung, für Vorsteuer und Ausgabe. Beim Monatsabschluss kommt sie in den nächsten Monat, die Zahlung ordnet die App dann selbst zu.</div>' : '<div class="note" style="margin-top:8px">Noch keiner Bankbuchung zugeordnet. Zahlst du später, kommt die Rechnung automatisch in den Monat der Zahlung.</div>') : '')) +
       '</div><div class="wide" style="display:flex;flex-direction:column;gap:12px" id="beleg-form">' +
       '<div class="grid">' +
       '<label class="f">Datum<input class="in" name="datum" placeholder="TT.MM.JJJJ" value="' + h(L.datum(g.datum)) + '" ' + (neu ? 'autofocus' : '') + '></label>' +
@@ -641,16 +642,22 @@
   APP.A['monat-abschliessen'] = function (el) {
     var j = +el.dataset.j, m = +el.dataset.m;
     var neu = L.gruppen(D.belege, function (b) { return b.jahr === j && b.monat === m && !b.storniert && !b.bestaetigt; }).length;
-    var ohneNr = L.gruppen(D.belege, function (b) { return b.jahr === j && b.monat === m && !b.storniert && b.status !== 'privat' && !b.nr; }).length;
+    var wt = L.wartend(D), warten = L.gruppen(D.belege, function (b) { return b.jahr === j && b.monat === m && wt[b.gruppe]; });
+    var ohneNr = L.gruppen(D.belege, function (b) { return b.jahr === j && b.monat === m && !b.storniert && b.status !== 'privat' && !b.nr && !wt[b.gruppe]; }).length;
     var bank = D.bank.filter(function (b) { return b.jahr === j && b.monat === m && b.art === 'offen'; }).length;
+    var nj = m === 12 ? j + 1 : j, nm = m === 12 ? 1 : m + 1;
     var warn = [];
+    if (!L.bankBis(D) || L.bankBis(D) < L.monatsEnde(j, m)) warn.push('der Kontoauszug ' + L.MONATE[m] + ' ist noch nicht eingelesen');
     if (neu) warn.push(neu + ' Beleg(e) noch nicht bestätigt');
     if (bank) warn.push(bank + ' Bankbuchung(en) ohne Beleg');
-    if (!ohneNr) { APP.toast('Alle Belege in ' + L.MONATE[m] + ' haben schon eine Nummer.'); return; }
-    APP.bestaetigen(ohneNr + ' Beleg(e) bekommen jetzt fortlaufende Nummern (zuerst nach Kontoauszug, dann Barbelege).' + (warn.length ? '<br><br><b>Noch offen:</b> ' + warn.join(', ') + '. Du kannst trotzdem abschließen; Nachträge bekommen später die nächste freie Nummer.' : ''), 'Abschließen').then(function (ok) {
+    if (!ohneNr && !warten.length) { APP.toast('Alle Belege in ' + L.MONATE[m] + ' haben schon eine Nummer.'); return; }
+    var wtText = warten.length ? '<br><br><b>Noch nicht bezahlt:</b> ' + warten.map(function (g) { return h(g.lieferant || 'Rechnung') + ' ' + L.eur(g.brutto); }).join(', ') + '. ' + (warten.length === 1 ? 'Sie kommt' : 'Sie kommen') + ' in den Monat der Zahlung (vorerst ' + L.MONATE[nm] + ') und bekommt dort die Nummer.' : '';
+    APP.bestaetigen((ohneNr ? ohneNr + ' Beleg(e) bekommen jetzt fortlaufende Nummern (zuerst nach Kontoauszug, dann Barbelege).' : 'Alle bezahlten Belege haben schon eine Nummer.') + wtText + (warn.length ? '<br><br><b>Noch offen:</b> ' + warn.join(', ') + '. Du kannst trotzdem abschließen; Nachträge bekommen später die nächste freie Nummer.' : ''), 'Abschließen').then(function (ok) {
       if (!ok) return;
       return APP.lauf(el, function () {
-        return APP.rpc('monat_abschliessen', { p_jahr: j, p_monat: m }).then(function (n) { return APP.laden().then(function () { APP.toast(n + ' Belegnummern vergeben.'); APP.render(); }); });
+        return Promise.all(warten.map(function (g) { return APP.upd('belege', { gruppe: g.gruppe }, { jahr: nj, monat: nm }); })).then(function () {
+          return APP.rpc('monat_abschliessen', { p_jahr: j, p_monat: m });
+        }).then(function (n) { return APP.laden().then(function () { APP.toast(n + ' Belegnummern vergeben.'); APP.render(); }); });
       });
     });
   };
