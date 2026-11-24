@@ -83,7 +83,7 @@
           var row = rows[0];
           if (opt.schritt) opt.schritt('wird gelesen');
           var link = opt.bank ? APP.upd('bank', { id: opt.bank.id }, { art: 'beleg', beleg_gruppe: row.gruppe }) : Promise.resolve();
-          return link.then(function () { return opt.lesen === false ? row : APP.belegLesen(row, opt.bank); });
+          return link.then(function () { return opt.lesen === false ? row : APP.belegLesen(row, opt.bank, blob); });
         });
       }, function (e) {
         if (!opt.ausWarteschlange && !opt.bank && APP.netzFehler(e)) return aufheben('Verbindung abgerissen · ist gespeichert, nächster Versuch in einer Minute');
@@ -92,8 +92,14 @@
     });
   };
   /* Die App liest den Beleg (Dienst "beleg-lesen" mit Claude); Ergebnis steht danach in der Datenbank */
-  APP.belegLesen = function (row, bank) {
-    return APP.fn('beleg-lesen', { id: row.id, bank: bank ? { datum: bank.datum, betrag: bank.betrag, name: bank.name } : null }).then(function (r) {
+  APP.belegLesen = function (row, bank, blob) {
+    /* PDF vorher im Gerät lesen: Text und E-Rechnung für die Gegenprobe; ohne Text (Scan, Foto) liest der Dienst zweimal */
+    var dok = null;
+    return APP.dokHolen(row.datei, blob).then(function (d) {
+      dok = d;
+      var zweit = !/\.pdf$/i.test(row.datei || '') || APP.textlos(d);
+      return APP.fn('beleg-lesen', { id: row.id, zweit: zweit, bank: bank ? { datum: bank.datum, betrag: bank.betrag, name: bank.name } : null });
+    }).then(function (r) {
       /* Post von Finanzamt oder SVS: liegt jetzt bei den Unterlagen, der Beleg ist weg */
       if (r && r.unterlage) {
         APP.merkeAusgeblendet(Object.assign({}, row, { lesung: Object.assign({}, row.lesung || {}, { post: r.unterlage.id }), datei: r.schon ? r.unterlage.pfad : row.datei }));
@@ -107,6 +113,8 @@
         if (res.error) throw res.error;
         APP.merge('belege', res.data || []);
         var neu = res.data && res.data[0];
+        return (dok ? APP.belegPruefen(row.gruppe, dok).catch(function (e) { if (window.console) console.warn('Gegenprobe', e); }) : Promise.resolve()).then(function () {
+        neu = D.belege.filter(function (b) { return b.gruppe === row.gruppe && !b.storniert; })[0] || neu;
         /* Barbeleg oder fotografierter Kartenbeleg: Monat nach dem Belegdatum, solange der Monat noch offen ist */
         if (neu && (neu.zahlung === 'bar' || neu.quelle === 'scan') && neu.datum && !neu.nr && !bank) {
           var j = +neu.datum.slice(0, 4), m = +neu.datum.slice(5, 7), mo = L.monat(D, j, m);
@@ -114,6 +122,7 @@
             return APP.upd('belege', { gruppe: neu.gruppe }, { jahr: j, monat: m }).then(function () { return APP.autoBestaetigen(function (b) { return b.gruppe === row.gruppe; }); }).then(function (n) { return Object.assign(neu, { verschoben: L.MONATE[m] + ' ' + j, r: r, auto: n > 0 }); });
         }
         return APP.autoBestaetigen(function (b) { return b.gruppe === row.gruppe; }).then(function (n) { return Object.assign(neu || row, { r: r, auto: n > 0 }); });
+        });
       });
     }).catch(function (e) {
       if (e && (e.status === 404 || /not found|nicht eingerichtet|ANTHROPIC/i.test(e.message))) {

@@ -259,3 +259,11 @@ button.chip.bad, button.chip.warn { background: var(--badBg); color: var(--bad);
 .note.yel { background: var(--yelBg); }
 
 button.chip.warn { background: var(--warnBg); color: var(--warn); }
+
+.note.pruef ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.note.pruef li { color: var(--ink); }
+.note.pruef li span { display: inline-block; width: 16px; font-weight: 700; }
+.note.pruef li.ok span { color: var(--ok); }
+.note.pruef li.warn span { color: var(--warn); }
+.note.pruef li.bad { color: var(--bad); font-weight: 600; }
+.note.pruef li.info { color: var(--mut); }

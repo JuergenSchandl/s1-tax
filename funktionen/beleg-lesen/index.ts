@@ -194,7 +194,7 @@ Deno.serve(async (req) => {
   const { data: person } = await sb.rpc("my_person");
   if (!person) return json({ error: "Nicht angemeldet oder kein Zugang." }, 401);
 
-  let body: { id?: string; ping?: boolean; bank?: { datum?: string; betrag?: number; name?: string } | null } = {};
+  let body: { id?: string; ping?: boolean; zweit?: boolean; bank?: { datum?: string; betrag?: number; name?: string } | null } = {};
   try { body = await req.json(); } catch (_) { body = {}; }
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   const { data: ki } = await sb.from("einstellungen").select("value").eq("key", "ki").maybeSingle();
@@ -236,6 +236,24 @@ Deno.serve(async (req) => {
       : { type: "image", source: { type: "base64", media_type: media, data: encodeBase64(bytes) } },
     { type: "text", text: prompt(verlauf.join("\n"), body.bank || null, regeln) },
   ];
+  // Fotos und Scans ohne Text: gleichzeitig eine zweite, unabhängige Lesung nur der Summen (Gegenprobe)
+  const KONTROLLE = `Lies auf diesem Beleg nur diese Werte und antworte nur mit JSON, ohne Erklärung:
+{"brutto": Gesamtbetrag, der bezahlt wurde (inkl. Steuer), "ust": Summe der ausgewiesenen Umsatzsteuer/MwSt/IVA/TVA (0, wenn keine ausgewiesen ist), "datum": "JJJJ-MM-TT" oder null, "waehrung": "EUR"}
+Beträge als Zahl mit Punkt, z. B. 12.40. Rechne nichts aus, lies die Werte, die auf dem Beleg stehen.`;
+  // deno-lint-ignore no-explicit-any
+  const zweitP: Promise<any> = (body.zweit || media !== "application/pdf")
+    ? fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model: modell, max_tokens: 300, messages: [{ role: "user", content: [content[0], { type: "text", text: KONTROLLE }] }] }),
+    }).then(async (r2) => {
+      if (!r2.ok) throw new Error("HTTP " + r2.status);
+      const o2 = await r2.json();
+      const t2 = (o2.content || []).filter((c: { type: string }) => c.type === "text").map((c: { text: string }) => c.text).join("\n");
+      const m2 = t2.match(/\{[\s\S]*\}/);
+      return JSON.parse(m2 ? m2[0] : t2);
+    }).catch((e) => ({ fehler: String((e && e.message) || e) }))
+    : Promise.resolve(null);
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
@@ -314,6 +332,25 @@ Deno.serve(async (req) => {
     const { data: k2 } = await sb.from("belege").select(SEL).neq("gruppe", row.gruppe).eq("storniert", false).gte("datum", tag(-10)).lte("datum", tag(45)).gte("brutto", brutto - 0.01).lte("brutto", brutto + 0.01).limit(20);
     treffer = (k2 || []).find((k) => L.aehnlich(k.lieferant, r.lieferant)) || null;
   }
+  // Gegenprobe: zweite Lesung mit der ersten vergleichen (Betrag, Steuer, Datum)
+  // deno-lint-ignore no-explicit-any
+  const k2: any = await zweitP;
+  let kontrolle: Record<string, unknown> | undefined = undefined;
+  if (k2) {
+    if (k2.fehler || !Number.isFinite(Number(k2.brutto))) kontrolle = { fehler: true, brutto_erst: zahl(Math.abs(brutto)) };
+    else {
+      const b1 = zahl(Math.abs(brutto)), b2 = zahl(Math.abs(Number(k2.brutto)));
+      const alleVst = zeilen.every((z: { steuerart: string }) => z.steuerart === "vst");
+      const u1 = zahl(Math.abs(zeilen.reduce((n: number, z: { ust: number }) => n + z.ust, 0))), u2 = zahl(Math.abs(Number(k2.ust) || 0));
+      const d1 = ISO.test(r.datum || "") ? r.datum : null, d2 = ISO.test(k2.datum || "") ? k2.datum : null;
+      const abw: string[] = [];
+      if (Math.abs(b2 - b1) > 0.01) abw.push(`Betrag ${L.eur(b2)} statt ${L.eur(b1)}`);
+      if (alleVst && Math.abs(u2 - u1) > 0.01) abw.push(`Steuer ${L.eur(u2)} statt ${L.eur(u1)}`);
+      if (d1 && d2 && d1 !== d2) abw.push(`Datum ${L.datum(d2)} statt ${L.datum(d1)}`);
+      kontrolle = { gleich: !abw.length, brutto: b2, ust: alleVst ? u2 : null, datum: d2, abweichung: abw, brutto_erst: b1 };
+    }
+  }
+
   const doppelt = treffer ? `${treffer.lieferant} vom ${L.datum(treffer.datum)} über ${L.eur(treffer.brutto)} (${treffer.nr ? "Beleg " + treffer.nr + "/" + String(treffer.jahr).slice(2) : L.MONATE[treffer.monat] + ", noch ohne Nummer"})` : null;
   const doppeltGruppe = treffer ? treffer.gruppe : null;
 
@@ -338,7 +375,7 @@ Deno.serve(async (req) => {
     garantie_bis: garantie,
     bestaetigt: false,
     status: frage ? "unklar" : row.status,
-    lesung: { ...(row.lesung || {}), ki: { ...r, zeilen: undefined, volltext: undefined, frage, doppelt, doppelt_gruppe: doppeltGruppe, regel: regel ? `${regel.lieferant}: ${regel.nur ? "nur " + regel.nur + " geschäftlich, der Rest privat" : ""}${regel.nur && regel.text ? ". " : ""}${regel.text || ""}` : null }, modell, zeit: new Date().toISOString() },
+    lesung: { ...(row.lesung || {}), ki: { ...r, zeilen: undefined, volltext: undefined, frage, doppelt, doppelt_gruppe: doppeltGruppe, regel: regel ? `${regel.lieferant}: ${regel.nur ? "nur " + regel.nur + " geschäftlich, der Rest privat" : ""}${regel.nur && regel.text ? ". " : ""}${regel.text || ""}` : null }, kontrolle, pruefung: undefined, modell, zeit: new Date().toISOString() },
   };
   // privat ist keine Spalte: als Status der Zeile speichern
   const ohne = (z: Record<string, unknown>) => { const { privat, ...rest } = z; return { ...rest, status: privat ? "privat" : gemeinsam.status }; };
@@ -355,5 +392,5 @@ Deno.serve(async (req) => {
     if (e4) return json({ error: e4.message }, 500);
   }
   if (frage) await sb.from("fragen").insert({ tabelle: "belege", datensatz: row.id, jahr: row.jahr, monat: row.monat, text: frage, von: "app", an: "j" });
-  return json({ ok: true, zeilen: zeilen.length, brutto, doppelt, doppelt_gruppe: doppeltGruppe, frage, zahlung, fremd });
+  return json({ ok: true, zeilen: zeilen.length, brutto, doppelt, doppelt_gruppe: doppeltGruppe, frage, zahlung, fremd, kontrolle: kontrolle || null });
 });

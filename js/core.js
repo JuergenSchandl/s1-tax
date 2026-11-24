@@ -6,7 +6,7 @@
   var CFG = window.S1_CONFIG || {};
   var L = window.L;
   var APP = window.APP = {
-    VERSION: '2026.11.22b',
+    VERSION: '2026.11.24a',
     CFG: CFG,
     sb: null,
     D: { belege: [], bank: [], ausgang: [], kunden: [], monate: [], einst: {}, fragen: [], hinweise: {}, members: [] },
@@ -82,6 +82,10 @@
     if (typeof m !== 'string') m = JSON.stringify(m);
     if (APP.netzFehler(e)) m = 'Keine Verbindung. Bitte Internet prüfen.';
     else if (/JWT|session|not authenticated/i.test(m)) m = 'Die Anmeldung ist abgelaufen. Bitte neu anmelden.';
+    else if (/summe_check/.test(m)) m = 'Netto und Steuer ergeben nicht den Bruttobetrag. Nicht gespeichert.';
+    else if (/ust_nur_vst/.test(m)) m = 'Umsatzsteuer gibt es nur bei Zeilen mit Vorsteuer. Nicht gespeichert.';
+    else if (/ist schon vergeben/.test(m)) m = m.replace(/^.*?(Belegnummer[^.]*ist schon vergeben\.?).*$/, '$1') + ' Nicht gespeichert.';
+    else if (/ausgang_jahr_laufnr_key/.test(m)) m = 'Diese Rechnungsnummer gibt es schon. Nicht gespeichert.';
     else if (/permission denied|row-level security|violates/i.test(m)) m = 'Das darf die App so nicht speichern (' + m + ').';
     else if (/Payload too large|exceeded the maximum allowed size|413/i.test(m)) m = 'Die Datei ist zu groß.';
     return m;

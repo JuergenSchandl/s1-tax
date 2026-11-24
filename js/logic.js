@@ -93,8 +93,176 @@
       return !!v.paare[b.konto + '|' + art];
     });
     if (!ok) return null;
+    /* zweite, unabhängige Quelle: E-Rechnung, Text im PDF oder zweite Lesung des Fotos; Bank darf nicht abweichen */
+    var sich = L.sicherheit(D, g);
+    if (!sich.ok) return null;
     var benutzt = {}; gesch.forEach(function (b) { benutzt[b.konto + '|' + (b.steuerart || 'vst')] = 1; });
-    return 'Lieferant und Konten wie bisher (' + Object.keys(benutzt).map(function (p) { return L.paarText(p, v.paare[p]); }).join('; ') + ')';
+    return 'Lieferant und Konten wie bisher (' + Object.keys(benutzt).map(function (p) { return L.paarText(p, v.paare[p]); }).join('; ') + ') · ' + sich.kurz;
+  };
+
+  /* ---------- Gegenprobe ohne KI: Text im PDF, eingebettete E-Rechnung, Bank ---------- */
+  L.textNorm = function (t) { return String(t || '').replace(/[\u00a0\u202f\u2009\u2007\u2002\u2003]/g, ' ').replace(/[ \t]+/g, ' '); };
+  /* alle üblichen Schreibweisen eines Betrags: 1234,50 · 1.234,50 · 1 234,50 · 1'234,50 · 1234.50 · 1,234.50 */
+  L.betragFormen = function (x) {
+    var c = Math.round(Math.abs(L.n(x)) * 100), ganz = String(Math.floor(c / 100)), dez = L.p2(c % 100), f = {};
+    var mit = function (t) { return t ? ganz.replace(/\B(?=(\d{3})+(?!\d))/g, t) : ganz; };
+    [',', '.'].forEach(function (d) { ['', '.', ',', ' ', "'"].forEach(function (t) { if (t !== d) f[mit(t) + d + dez] = 1; }); });
+    return Object.keys(f);
+  };
+  function rx(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  function textVarianten(text) {
+    var t = L.textNorm(text);
+    return [t, t.replace(/(\d) ([.,]\d)/g, '$1$2').replace(/([.,]) (\d{2})(?!\d)/g, '$1$2')];
+  }
+  L.betragImText = function (text, x) {
+    if (!L.n(x)) return false;
+    var formen = L.betragFormen(x), tv = textVarianten(text);
+    return formen.some(function (f) {
+      var re = new RegExp('(^|[^\\d.,])' + rx(f) + '(?![\\d]|[.,]\\d)');
+      return tv.some(function (t) { return re.test(t); });
+    });
+  };
+  var MONATSNAMEN = [
+    ['jänner', 'januar', 'jan', 'january', 'enero', 'gennaio', 'janvier'], ['februar', 'feber', 'feb', 'february', 'febrero', 'febbraio', 'février'],
+    ['märz', 'mär', 'mar', 'march', 'marzo', 'mars'], ['april', 'apr', 'abril', 'aprile', 'avril'], ['mai', 'may', 'mayo', 'maggio'],
+    ['juni', 'jun', 'june', 'junio', 'giugno', 'juin'], ['juli', 'jul', 'july', 'julio', 'luglio', 'juillet'], ['august', 'aug', 'agosto', 'août'],
+    ['september', 'sep', 'sept', 'septiembre', 'settembre', 'septembre'], ['oktober', 'okt', 'oct', 'october', 'octubre', 'ottobre', 'octobre'],
+    ['november', 'nov', 'noviembre', 'novembre'], ['dezember', 'dez', 'dec', 'december', 'diciembre', 'dicembre', 'décembre']];
+  L.datumImText = function (text, iso) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || '')) return false;
+    var y = iso.slice(0, 4), yy = y.slice(2), m = +iso.slice(5, 7), d = +iso.slice(8, 10);
+    var t = L.textNorm(text).toLowerCase().replace(/(\d)\. (?=\d)/g, '$1.');
+    var ds = [L.p2(d), String(d)], ms = [L.p2(m), String(m)], f = [iso, y + '/' + L.p2(m) + '/' + L.p2(d), y + '.' + L.p2(m) + '.' + L.p2(d)];
+    ds.forEach(function (a) { ms.forEach(function (b) { ['.', '/', '-'].forEach(function (s) { f.push(a + s + b + s + y, a + s + b + s + yy, b + s + a + s + y); }); }); });
+    var fs = f.map(function (x) { return '(^|[^\\d])' + rx(x) + '(?!\\d)'; });
+    MONATSNAMEN[m - 1].forEach(function (n) {
+      ds.forEach(function (a) { fs.push('(^|[^\\d])' + a + '\\.? ?(de )?' + rx(n) + '\\.?,? (de )?(' + y + '|' + yy + ')(?!\\d)'); });
+      fs.push('(^|[^a-zäöüé])' + rx(n) + '\\.? ' + d + ',? ' + y + '(?!\\d)');
+    });
+    return fs.some(function (r) { return new RegExp(r).test(t); });
+  };
+  L.nrImText = function (text, nr) {
+    var n = String(nr || '').toLowerCase().replace(/\s+/g, '');
+    if (n.length < 3) return null;
+    return L.textNorm(text).toLowerCase().replace(/\s+/g, '').indexOf(n) >= 0;
+  };
+  function aktivRows(g) { return g.rows.filter(function (b) { return !b.storniert; }); }
+  function summen(g) {
+    var a = aktivRows(g), f = a[0] || g.rows[0] || {};
+    var vst = a.filter(function (b) { return (b.steuerart || 'vst') === 'vst' && L.n(b.ust); });
+    return { rows: a, f: f, brutto: L.r2(Math.abs(a.reduce(function (n, b) { return n + L.n(b.brutto); }, 0))), ust: L.r2(Math.abs(vst.reduce(function (n, b) { return n + L.n(b.ust); }, 0))), vst: vst };
+  }
+  /* Prüft die gelesenen Werte gegen den Text der PDF (ohne KI) */
+  L.textPruefung = function (g, text) {
+    var s = summen(g), t = String(text || '');
+    if (t.replace(/\s/g, '').length < 20) return { quelle: 'keintext', summe: s.brutto };
+    if (s.f.waehrung && s.f.waehrung !== 'EUR') return { quelle: 'text', summe: s.brutto, fremd: s.f.waehrung, ok: false };
+    var br = L.betragImText(t, s.brutto);
+    var ust = s.ust > 0 ? (L.betragImText(t, s.ust) || s.vst.every(function (b) { return L.betragImText(t, b.ust); })) : null;
+    return { quelle: 'text', summe: s.brutto, ust_summe: s.ust, brutto: br, ust: ust, datum: L.datumImText(t, g.datum || s.f.datum), nr: (g.rechnungsnr || s.f.rechnungsnr) ? L.nrImText(t, g.rechnungsnr || s.f.rechnungsnr) : null, ok: br && ust !== false };
+  };
+  /* Eingebettete E-Rechnung (ZUGFeRD/Factur-X/XRechnung als CII oder UBL) lesen – exakte Werte */
+  L.eRechnung = function (xml) {
+    xml = String(xml || '');
+    var cii = /CrossIndustryInvoice/.test(xml), ubl = !cii && /<(?:[\w-]+:)?(Invoice|CreditNote)\b[\s\S]*urn:oasis:names:specification:ubl/.test(xml);
+    if (!cii && !ubl) return null;
+    var block = function (name, scope) { var m = (scope === undefined ? xml : scope).match(new RegExp('<(?:[\\w-]+:)?' + name + '\\b[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?' + name + '>')); return m ? m[1] : ''; };
+    var bloecke = function (name, scope) { var re = new RegExp('<(?:[\\w-]+:)?' + name + '\\b[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?' + name + '>', 'g'), out = [], m; while ((m = re.exec(scope === undefined ? xml : scope))) out.push(m[1]); return out; };
+    var wert = function (name, scope) { var m = (scope === undefined ? xml : scope).match(new RegExp('<(?:[\\w-]+:)?' + name + '\\b[^>]*>([^<]*)</(?:[\\w-]+:)?' + name + '>')); return m ? m[1].trim() : null; };
+    var zahl = function (v) { return v === null || v === '' || isNaN(Number(v)) ? null : Math.abs(Number(v)); };
+    var name = function (scope) { return wert('Name', block('PartyName', scope)) || wert('RegistrationName', scope) || wert('Name', scope); };
+    var x = { format: cii ? 'CII' : 'UBL', steuern: [] };
+    if (cii) {
+      var doc = block('ExchangedDocument'), d = wert('DateTimeString', block('IssueDateTime', doc)) || '';
+      x.nr = wert('ID', doc); x.datum = /^\d{8}$/.test(d) ? d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8) : null;
+      var hs = block('ApplicableHeaderTradeSettlement'), sum = block('SpecifiedTradeSettlementHeaderMonetarySummation', hs);
+      x.waehrung = wert('InvoiceCurrencyCode', hs) || 'EUR';
+      x.netto = zahl(wert('TaxBasisTotalAmount', sum)); x.ust = zahl(wert('TaxTotalAmount', sum)); x.brutto = zahl(wert('GrandTotalAmount', sum));
+      bloecke('ApplicableTradeTax', hs).forEach(function (t) { var u = zahl(wert('CalculatedAmount', t)); if (u === null) return; x.steuern.push({ satz: zahl(wert('RateApplicablePercent', t)), basis: zahl(wert('BasisAmount', t)), ust: u, art: wert('CategoryCode', t) }); });
+      x.verkaeufer = wert('Name', block('SellerTradeParty')); x.kaeufer = wert('Name', block('BuyerTradeParty'));
+    } else {
+      var kopf = xml.replace(/<(?:[\w-]+:)?(InvoiceLine|CreditNoteLine)\b[\s\S]*$/, '');
+      x.nr = wert('ID', kopf.replace(/<(?:[\w-]+:)?(UBLVersionID|CustomizationID|ProfileID)\b[\s\S]*?<\/(?:[\w-]+:)?\1>/g, ''));
+      x.datum = /^\d{4}-\d{2}-\d{2}/.test(wert('IssueDate', kopf) || '') ? wert('IssueDate', kopf).slice(0, 10) : null;
+      x.waehrung = wert('DocumentCurrencyCode', kopf) || 'EUR';
+      var lm = block('LegalMonetaryTotal', kopf);
+      x.netto = zahl(wert('TaxExclusiveAmount', lm)); x.brutto = zahl(wert('TaxInclusiveAmount', lm)) || zahl(wert('PayableAmount', lm));
+      var tt = block('TaxTotal', kopf); x.ust = zahl(wert('TaxAmount', tt));
+      bloecke('TaxSubtotal', tt).forEach(function (t) { x.steuern.push({ satz: zahl(wert('Percent', t)), basis: zahl(wert('TaxableAmount', t)), ust: zahl(wert('TaxAmount', t)), art: wert('ID', block('TaxCategory', t)) }); });
+      x.verkaeufer = name(block('AccountingSupplierParty', kopf)); x.kaeufer = name(block('AccountingCustomerParty', kopf));
+    }
+    if (x.brutto === null) return null;
+    if (x.ust === null && x.netto !== null) x.ust = L.r2(x.brutto - x.netto);
+    return x;
+  };
+  /* Gelesene Werte gegen die E-Rechnung: stimmt alles, oder lässt es sich eindeutig korrigieren? */
+  L.eRechnungVergleich = function (g, x) {
+    var s = summen(g), out = { quelle: 'xml', format: x.format, summe: s.brutto, brutto: x.brutto, ust: x.ust, nr: x.nr || null, datum: x.datum || null, abw: [] };
+    if (x.waehrung && x.waehrung !== 'EUR') { out.fremd = x.waehrung; out.ok = false; return out; }
+    var alleVst = s.rows.every(function (b) { return (b.steuerart || 'vst') === 'vst'; });
+    if (Math.abs(x.brutto - s.brutto) > 0.01) out.abw.push('brutto');
+    if (alleVst && x.ust !== null && Math.abs(x.ust - s.ust) > 0.01) out.abw.push('ust');
+    var korr = {};
+    if (out.abw.length && alleVst && x.steuern.length === s.rows.length) {
+      var frei = s.rows.slice(), zeilen = {};
+      var passt = x.steuern.every(function (t) {
+        var i = frei.findIndex(function (b) { return Math.abs(L.n(b.steuersatz) - L.n(t.satz)) < 0.01; });
+        if (i < 0 || t.basis === null) return false;
+        var b = frei.splice(i, 1)[0];
+        zeilen[b.id] = { netto: L.r2(t.basis), ust: L.r2(t.ust), brutto: L.r2(t.basis + t.ust) };
+        return true;
+      });
+      var neuSumme = L.r2(Object.keys(zeilen).reduce(function (n, k) { return n + zeilen[k].brutto; }, 0));
+      if (passt && Math.abs(neuSumme - x.brutto) <= 0.011) { korr.zeilen = zeilen; out.vorher = s.brutto; out.summe = neuSumme; out.abw = []; }
+    }
+    if (x.datum && x.datum !== (g.datum || s.f.datum)) korr.datum = x.datum;
+    if (x.nr && String(x.nr).replace(/\s/g, '') !== String(g.rechnungsnr || s.f.rechnungsnr || '').replace(/\s/g, '')) korr.rechnungsnr = String(x.nr).slice(0, 80);
+    if (Object.keys(korr).length) out.korrektur = korr;
+    out.ok = !out.abw.length;
+    return out;
+  };
+  /* Gegenprobe mit dem Kontoauszug */
+  L.bankProbe = function (D, g) {
+    var s = summen(g);
+    if (g.zahlung !== 'bank' || g.quelle === 'import') return null;
+    var bks = D.bank.filter(function (x) { return x.beleg_gruppe === g.gruppe; });
+    if (!bks.length) { var bis = L.bankBis(D); return { stufe: 'offen', bis: bis, abgedeckt: !!(bis && g.datum && bis >= g.datum) }; }
+    /* mehrere Abbuchungen zu einem Beleg (z. B. Uber-Fahrten einer Reise) zählen zusammen */
+    var betrag = L.r2(bks.reduce(function (n, x) { return n + Math.abs(L.n(x.betrag)); }, 0)), diff = L.r2(betrag - s.brutto);
+    return { stufe: Math.abs(diff) <= 0.05 ? 'ok' : 'diff', rund: Math.abs(diff) > 0.01 && Math.abs(diff) <= 0.05, bank: bks[0], n: bks.length, betrag: betrag, diff: diff };
+  };
+  /* Wie sicher sind die Werte eines Belegs? Zeilen für die Anzeige und ob die App ihn selbst bestätigen darf */
+  L.sicherheit = function (D, g) {
+    var s = summen(g), l = s.f.lesung || {}, p = l.pruefung, k = l.kontrolle, z = [], ok = false, kurz = '';
+    var fr = function (x) { return Math.abs(L.n(x) - s.brutto) <= 0.011; };
+    if (g.quelle === 'import') return { ok: true, zeilen: [], kurz: '', import: true };
+    if (p && p.quelle === 'xml' && fr(p.summe)) {
+      if (p.ok) { ok = true; kurz = 'Beträge laut E-Rechnung'; z.push({ a: 'ok', t: 'E-Rechnung in der PDF: Betrag' + (p.nr ? ', Nummer' : '') + (p.datum ? ' und Datum' : '') + ' exakt übernommen.' + (p.vorher !== undefined ? ' Vorher gelesen: ' + L.eur(p.vorher) + '.' : '') }); }
+      else if (p.fremd) z.push({ a: 'warn', t: 'E-Rechnung in ' + p.fremd + ': bitte den Euro-Betrag selbst prüfen.' });
+      else z.push({ a: 'bad', t: 'Laut eingebetteter E-Rechnung ' + L.eur(p.brutto) + (p.ust !== null && p.abw.indexOf('ust') >= 0 ? ' (Steuer ' + L.eur(p.ust) + ')' : '') + ', gelesen ' + L.eur(s.brutto) + '. Bitte prüfen.' });
+    } else if (p && p.quelle === 'text' && fr(p.summe)) {
+      if (p.fremd) z.push({ a: 'warn', t: 'Rechnung in ' + p.fremd + ': bitte den Euro-Betrag selbst prüfen.' });
+      else if (!p.brutto) z.push({ a: 'warn', t: 'Der Betrag ' + L.eur(s.brutto) + ' steht so nicht im Dokument. Bitte prüfen.' });
+      else if (p.ust === false) z.push({ a: 'warn', t: 'Die Steuer ' + L.eur(p.ust_summe) + ' steht so nicht im Dokument. Bitte prüfen.' });
+      else {
+        ok = true; kurz = 'Betrag im Dokument gefunden';
+        var ge = ['Betrag ' + L.eur(s.brutto)]; if (p.ust && p.ust_summe) ge.push('Steuer ' + L.eur(p.ust_summe)); if (p.datum) ge.push('Datum'); if (p.nr) ge.push('Rechnungsnummer');
+        z.push({ a: 'ok', t: 'Im Dokument gefunden: ' + ge.join(', ') + '.' + (p.datum === false ? ' Das Datum steht in anderer Schreibweise da.' : '') + (p.nr === false ? ' Die Rechnungsnummer steht anders da.' : '') });
+      }
+    } else if (k && !k.fehler && k.brutto_erst !== undefined && fr(k.brutto_erst)) {
+      if (k.gleich) { ok = true; kurz = 'zweimal gleich gelesen'; z.push({ a: 'ok', t: 'Foto zweimal unabhängig gelesen: beide Male ' + L.eur(s.brutto) + (k.ust !== null && k.ust !== undefined && s.ust ? ', Steuer ' + L.eur(k.ust) : '') + '.' }); }
+      else z.push({ a: 'warn', t: 'Zweite Lesung: ' + (k.abweichung || []).join(', ') + '. Bitte prüfen.' });
+    } else if (k && k.fehler) z.push({ a: 'info', t: 'Die zweite Lesung hat nicht geklappt. Bitte den Betrag selbst kurz prüfen.' });
+    else if ((p && p.summe !== undefined && !fr(p.summe)) || (k && k.brutto_erst !== undefined && !fr(k.brutto_erst))) z.push({ a: 'info', t: 'Seit der Prüfung von Hand geändert.' });
+    else if (p && p.quelle === 'keintext') z.push({ a: 'info', t: 'Die PDF enthält keinen Text (Scan). Bitte den Betrag selbst kurz prüfen.' });
+    else if (p && p.quelle === 'fehler') z.push({ a: 'info', t: 'Das Dokument ließ sich nicht prüfen.' });
+    else if (s.f.datei) z.push({ a: 'info', t: 'Noch nicht gegen das Dokument geprüft.', pruefen: /\.pdf$/i.test(s.f.datei) });
+    var bp = L.bankProbe(D, g);
+    if (bp && bp.stufe === 'ok') z.push({ a: 'ok', t: (bp.n > 1 ? bp.n + ' Abbuchungen ab ' : 'Abbuchung am ') + L.datum(bp.bank.datum) + ' über ' + L.eur(bp.betrag) + (bp.rund ? ' stimmt bis auf ' + L.eur(Math.abs(bp.diff)) + ' Rundung.' : ' stimmt.') });
+    else if (bp && bp.stufe === 'diff') { ok = false; z.push({ a: 'bad', t: 'Abbuchung am ' + L.datum(bp.bank.datum) + ' über ' + L.eur(bp.betrag) + ': ' + L.eur(Math.abs(bp.diff)) + (bp.diff > 0 ? ' mehr' : ' weniger') + ' als der Beleg.' }); }
+    /* noch keine Abbuchung: das sagt schon der Hinweis „noch nicht bezahlt“ im Beleg */
+    var stufe = z.some(function (x) { return x.a === 'bad'; }) ? 'bad' : z.some(function (x) { return x.a === 'warn'; }) ? 'warn' : ok ? (bp && bp.stufe === 'offen' ? 'vorlaeufig' : 'geprueft') : 'offen';
+    return { ok: ok, kurz: kurz, zeilen: z, stufe: stufe, bank: bp };
   };
   L.imMonat = function (iso, j, m) { return !!iso && iso.slice(0, 7) === j + '-' + L.p2(m); };
   L.esc = function (s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
@@ -630,6 +798,107 @@
   };
   L.monatsDatei = function (j, m) { return m + '-' + String(j).slice(2) + '.xlsx'; };
 
+  /* ---------- Vergleich mit einer Monatsliste (eigene oder von der CNC) ----------
+     Beide Seiten laufen durch denselben Leser: die App über ihr eigenes „Excel für CNC“, die Liste aus der hochgeladenen Datei. */
+  function zellWert(c) {
+    if (c === null || c === undefined) return null;
+    if (typeof c === 'object') return c.v !== undefined && c.v !== null ? c.v : (c.f !== undefined ? { f: c.f } : null);
+    return c;
+  }
+  function formelSumme(f) {
+    var x = String(f || '').replace(/^=/, '').replace(/\s/g, '');
+    return /^-?[\d.]+([+-][\d.]+)*$/.test(x) ? L.r2(x.split(/(?=[+-])/).reduce(function (n, t) { return n + Number(t); }, 0)) : null;
+  }
+  function zahlAus(v) {
+    if (v === null || v === undefined || v === '') return null;
+    if (typeof v === 'object') return v.f ? formelSumme(v.f) : null;
+    if (typeof v === 'number') return L.r2(v);
+    var x = String(v).replace(/[^\d,.\-]/g, '');
+    x = /,\d{1,2}$/.test(x) ? x.replace(/\./g, '').replace(',', '.') : x.replace(/,/g, '');
+    return x && isFinite(Number(x)) ? L.r2(Number(x)) : null;
+  }
+  function isoAus(v) {
+    if (v === null || v === undefined || v === '') return null;
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+    if (typeof v === 'number' && v > 30000 && v < 80000) return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 10);
+    var m = String(v).match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+    return m ? (m[3].length === 2 ? '20' + m[3] : m[3]) + '-' + L.p2(+m[2]) + '-' + L.p2(+m[1]) : null;
+  }
+  function kopfFinden(rows, muss) {
+    var hi = rows.findIndex(function (r) { var t = (r || []).map(function (c) { return String(zellWert(c) || '').trim().toLowerCase(); }); return t.indexOf('datum') >= 0 && muss.every(function (re) { return t.some(function (k) { return re.test(k); }); }); });
+    if (hi < 0) return null;
+    var kopf = rows[hi].map(function (c) { return String(zellWert(c) || '').trim().toLowerCase(); });
+    return { i: hi, col: function (re, def) { var k = kopf.findIndex(function (x) { return re.test(x); }); return k >= 0 ? k : (def === undefined ? -1 : def); } };
+  }
+  L.listeAusBlatt = function (rows) {
+    rows = rows || [];
+    var k = kopfFinden(rows, [/brutto/]);
+    if (!k) return null;
+    var cD = k.col(/^datum$/), cN = k.col(/^name$/), cB = k.col(/bezeichnung/), cK = k.col(/^konto$/), cBr = k.col(/brutto/), cNe = k.col(/netto/), cNr = k.col(/^nr\.?$|^beleg/, 9), out = [];
+    for (var i = k.i + 1; i < rows.length; i++) {
+      var r = rows[i] || [], d = isoAus(zellWert(r[cD])), br = zahlAus(zellWert(r[cBr]));
+      if (!d || br === null) continue;
+      var nr = zellWert(r[cNr]); nr = nr === null || typeof nr === 'object' ? '' : String(nr).trim();
+      out.push({ zeile: i + 1, datum: d, name: String(zellWert(r[cN]) || '').trim(), text: cB >= 0 ? String(zellWert(r[cB]) || '').trim() : '', konto: zahlAus(zellWert(r[cK])), brutto: br, netto: zahlAus(zellWert(r[cNe])), nr: /^neu$/i.test(nr) ? '' : nr });
+    }
+    return out;
+  };
+  L.ausgangAusBlatt = function (rows) {
+    rows = rows || [];
+    var k = kopfFinden(rows, [/^nummer$/]);
+    if (!k) return [];
+    var cD = k.col(/^datum$/), cE = k.col(/empf/), cNr = k.col(/^nummer$/), cNe = k.col(/^netto$/), cU = k.col(/^ust$|^mwst$/), cBr = k.col(/^brutto$/), out = [];
+    for (var i = k.i + 1; i < rows.length; i++) {
+      var r = rows[i] || [], d = isoAus(zellWert(r[cD])), nr = zellWert(r[cNr]);
+      if (!d || nr === null || nr === '') continue;
+      var ne = zahlAus(zellWert(r[cNe])), u = zahlAus(zellWert(r[cU])), br = zahlAus(zellWert(r[cBr]));
+      if (br === null && ne !== null) br = L.r2(ne + (u || 0));
+      out.push({ zeile: i + 1, datum: d, name: String(zellWert(r[cE]) || '').trim(), nr: String(nr).trim(), netto: ne, ust: u, brutto: br });
+    }
+    return out;
+  };
+  L.listenVergleich = function (app, liste) {
+    var A = app.map(function (x) { return Object.assign({}, x); }), B = liste.map(function (x) { return Object.assign({}, x); }), paare = [];
+    var gb = function (x, y) { return x !== null && y !== null && Math.abs(L.n(x) - L.n(y)) <= 0.011; };
+    var tage = function (x, y) { return Math.abs((Date.parse(x) - Date.parse(y)) / 86400000); };
+    [function (x, y) { return x.nr && y.nr && x.nr === y.nr && Number(x.konto) === Number(y.konto) && gb(x.brutto, y.brutto); },
+      function (x, y) { return x.datum === y.datum && gb(x.brutto, y.brutto) && (Number(x.konto) === Number(y.konto) || L.aehnlich(x.name, y.name)); },
+      function (x, y) { return gb(x.brutto, y.brutto) && tage(x.datum, y.datum) <= 5 && L.aehnlich(x.name, y.name); },
+      function (x, y) { return x.nr && y.nr && x.nr === y.nr && (Number(x.konto) === Number(y.konto) || L.aehnlich(x.name, y.name)); },
+      function (x, y) { return x.datum === y.datum && L.aehnlich(x.name, y.name) && (x.konto === undefined || Number(x.konto) === Number(y.konto)); }
+    ].forEach(function (f) {
+      A.forEach(function (x) { if (x.p) return; var y = B.find(function (z) { return !z.p && f(x, z); }); if (y) { x.p = y.p = true; paare.push([x, y]); } });
+    });
+    var out = { gleich: [], abweichend: [], nurApp: A.filter(function (x) { return !x.p; }), nurListe: B.filter(function (x) { return !x.p; }) };
+    paare.forEach(function (p) {
+      var x = p[0], y = p[1], f = [];
+      if (!gb(x.brutto, y.brutto)) f.push('Brutto ' + L.eur(x.brutto) + ' statt ' + L.eur(y.brutto));
+      if (x.netto !== null && x.netto !== undefined && y.netto !== null && y.netto !== undefined && !gb(x.netto, y.netto)) f.push('Netto ' + L.eur(x.netto) + ' statt ' + L.eur(y.netto));
+      if (x.ust !== undefined && y.ust !== undefined && x.ust !== null && y.ust !== null && !gb(x.ust, y.ust)) f.push('USt ' + L.eur(x.ust) + ' statt ' + L.eur(y.ust));
+      if (x.konto !== undefined && Number(x.konto) !== Number(y.konto)) f.push('Konto ' + (x.konto || '–') + ' statt ' + (y.konto || '–'));
+      if (x.datum !== y.datum) f.push('Datum ' + L.datum(x.datum) + ' statt ' + L.datum(y.datum));
+      if (x.nr && y.nr && x.nr !== y.nr) f.push('Nr. ' + x.nr + ' statt ' + y.nr);
+      (f.length ? out.abweichend : out.gleich).push({ app: x, liste: y, felder: f });
+    });
+    var sum = function (l) { return L.r2(l.reduce(function (n, x) { return n + L.n(x.brutto); }, 0)); };
+    out.summe = { app: sum(A), liste: sum(B) };
+    return out;
+  };
+  /* ganzer Monat: App-Liste (wie „Excel für CNC“) gegen die Blätter der hochgeladenen Datei */
+  L.monatVergleich = function (D, j, m, blaetter) {
+    var eigen = L.monatsExcel(D, j, m);
+    var ein = null, aus = [];
+    (blaetter || []).forEach(function (b) {
+      var e = L.listeAusBlatt(b.rows); if (e && (!ein || /eingang/i.test(b.name))) ein = ein && !/eingang/i.test(b.name) ? ein : e;
+      var a = L.ausgangAusBlatt(b.rows); if (a.length && /ausgang/i.test(b.name || '')) aus = a;
+    });
+    if (!ein) return null;
+    var appEin = L.listeAusBlatt(eigen[0].rows), appAus = L.ausgangAusBlatt(eigen[1].rows);
+    appAus.forEach(function (x) { delete x.konto; }); aus.forEach(function (x) { delete x.konto; });
+    var e = L.listenVergleich(appEin, ein), a = L.listenVergleich(appAus, aus);
+    return { ein: e, aus: aus.length || appAus.length ? a : null, zeilen: { app: appEin.length, liste: ein.length } };
+  };
+
   L.rechnungsnummernExcel = function (D) {
     var jahre = {};
     D.ausgang.forEach(function (a) { if (!a.entwurf) (jahre[a.jahr] = jahre[a.jahr] || []).push(a); });
@@ -716,6 +985,11 @@
     if (st.abgabenkonto_stand && L.tageBis(heute, st.abgabenkonto_stand) > 60) add('info', 'Steuerwerte', 'Guthaben am Abgabenkonto zuletzt am ' + L.datum(st.abgabenkonto_stand) + ' eingetragen');
     var bis = L.bankBis(D);
     if (bis && L.tageBis(heute, bis) > 40) add('info', 'Bank', 'Kontoauszüge sind erst bis ' + L.datum(bis) + ' eingelesen', 'bank');
+    /* Vergleich mit der Monatsliste: Unterschiede sind Widersprüche, bis sie geklärt sind */
+    Object.keys(D.einst && D.einst.vergleiche || {}).forEach(function (k) {
+      var e = D.einst.vergleiche[k], jm = k.split('-'), n = e.abweichend.length + e.nurApp.length + e.nurListe.length + (e.aus ? e.aus.abweichend.length + e.aus.nurApp.length + e.aus.nurListe.length : 0);
+      if (n) add('warn', 'Vergleich mit Liste', L.MONATE[+jm[1]] + ' ' + jm[0] + ': ' + n + (n === 1 ? ' Unterschied' : ' Unterschiede') + ' zur Liste „' + e.datei + '“', 'monat:' + k);
+    });
     return out;
   };
   L.hinweise = function (D, ich) {

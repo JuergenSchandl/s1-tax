@@ -28,8 +28,22 @@
     if (g.status === 'privat') return '<span class="chip">privat</span>';
     if (g.status === 'unklar') return '<span class="chip warn">unklar</span>';
     if (g.privat) return '<span class="chip">davon privat ' + L.fmt(g.privat) + '</span>';
+    var sc = L.sicherheit(D, g);
+    if (sc.stufe === 'bad') return '<span class="chip bad" title="' + h(sc.zeilen.filter(function (z) { return z.a === 'bad'; }).map(function (z) { return z.t; }).join(' ')) + '">' + (sc.bank && sc.bank.stufe === 'diff' ? 'Bank ' + (sc.bank.diff > 0 ? '+' : '−') + L.fmt(Math.abs(sc.bank.diff)) : 'Betrag prüfen') + '</span>';
     if (L.wartend(D)[g.gruppe]) return '<span class="chip yel" title="Zählt erst im Monat der Zahlung">noch nicht bezahlt</span>';
+    if (sc.stufe === 'warn') return '<span class="chip warn" title="' + h(sc.zeilen.filter(function (z) { return z.a === 'warn'; }).map(function (z) { return z.t; }).join(' ')) + '">Betrag prüfen</span>';
     return '';
+  }
+  /* Gegenprobe im Beleg: woher die Werte bestätigt sind, und was nicht passt */
+  function pruefNote(g) {
+    if (g.storniert) return '';
+    var sc = L.sicherheit(D, g);
+    if (!sc.zeilen.length) return '';
+    var titel = { geprueft: 'Doppelt geprüft', vorlaeufig: 'Geprüft, Abbuchung fehlt noch', warn: 'Bitte den Betrag prüfen', bad: 'Abweichung', offen: 'Gegenprobe' }[sc.stufe];
+    var cls = { geprueft: 'ok', vorlaeufig: 'ok', warn: 'warn', bad: 'bad', offen: '' }[sc.stufe];
+    var icon = { ok: '✓', warn: '!', bad: '!', info: '·' };
+    var knopf = sc.zeilen.some(function (z) { return z.pruefen; }) ? '<div style="margin-top:8px"><button type="button" class="btn small" data-act="beleg-pruefen" data-g="' + g.gruppe + '" data-busy="Prüfe …">Jetzt gegen das Dokument prüfen</button></div>' : '';
+    return '<div class="note pruef ' + cls + '"><b>' + titel + '</b><ul>' + sc.zeilen.map(function (z) { return '<li class="' + z.a + '"><span aria-hidden="true">' + icon[z.a] + '</span> ' + h(z.t) + '</li>'; }).join('') + '</ul>' + knopf + '</div>';
   }
   APP.belegStatusChip = statusChip;
   function filterGr(g, f) {
@@ -97,6 +111,9 @@
       else status.push('<span class="chip">Offen · Belegnummern beim Abschluss</span>');
       if (mo && mo.geprueft_am) status.push('<span class="chip ' + (mo.nach_pruefung_geaendert ? 'warn' : 'ok') + '">Geprüft ' + L.datum(mo.geprueft_am.slice(0, 10)) + ' · ' + APP.name(mo.geprueft_von) + (mo.nach_pruefung_geaendert ? ' · danach geändert' : '') + '</span>');
       var acts = '<button type="button" class="btn" data-act="monat-excel" data-j="' + j + '" data-m="' + m + '">' + APP.icon('excel', 16) + ' Excel für CNC</button>';
+      acts += '<button type="button" class="btn" data-act="monat-vergleich" data-j="' + j + '" data-m="' + m + '" title="Monatsliste (eigene oder von der CNC) hochladen und Zeile für Zeile vergleichen">Mit Liste vergleichen</button>';
+      var vg = (D.einst.vergleiche || {})[j + '-' + m];
+      if (vg) { var vgt = APP.vergleichText(vg); status.push('<button type="button" class="chip ' + (vgt.probleme ? 'warn' : 'ok') + '" data-act="vergleich-zeigen" data-j="' + j + '" data-m="' + m + '">Vergleich: ' + h(vgt.text) + '</button>'); }
       var ohneNr = alle.some(function (g) { return !g.storniert && g.status !== 'privat' && !g.nr; });
       if (ich === 'j' && (ohneNr || !(mo && mo.abgeschlossen_am))) acts += '<button type="button" class="btn pri" data-act="monat-abschliessen" data-j="' + j + '" data-m="' + m + '">' + (mo && mo.abgeschlossen_am ? 'Nachträge nummerieren' : 'Monat abschließen') + '</button>';
       acts += (mo && mo.geprueft_am && !mo.nach_pruefung_geaendert) ? '<button type="button" class="btn" data-act="monat-geprueft" data-j="' + j + '" data-m="' + m + '" data-aus="1">Prüfung zurücknehmen</button>' : '<button type="button" class="btn' + (ich === 'd' ? ' pri' : '') + '" data-act="monat-geprueft" data-j="' + j + '" data-m="' + m + '">' + APP.icon('check', 16) + ' Monat geprüft</button>';
@@ -386,7 +403,7 @@
       if (v.gruppen && neuP.some(function (p) { return !v.paare[p]; }))
         bisher = '<div class="note warn"><b>Bisher bei ' + h(g.lieferant) + ' so gebucht:</b> ' + Object.keys(v.paare).sort(function (a, b) { return v.paare[b] - v.paare[a]; }).slice(0, 3).map(function (p) { return L.paarText(p, v.paare[p]); }).join('; ') + '. Deshalb bitte prüfen.</div>';
     }
-    if (!l || !l.ki) return zurueckNote(g) + autoNote + bisher;
+    if (!l || !l.ki) return zurueckNote(g) + pruefNote(g) + autoNote + bisher;
     var k = l.ki, t = [];
     if (k.begruendung) t.push(h(k.begruendung));
     if (k.regel) t.push('<b>Regel:</b> ' + h(k.regel));
@@ -400,7 +417,7 @@
       doppel = '<div class="note warn"><b>Diesen Beleg gibt es vermutlich schon:</b> ' + h(k.doppelt) + '. Er zählt deshalb vorerst nirgends mit.' +
         (dg ? '<div class="chips" style="margin-top:8px"><button type="button" class="btn small pri" data-act="doppelt-anhaengen" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Datei an ' + (L.belegNr(dg) ? 'Beleg ' + L.belegNr(dg) : 'den bestehenden Beleg') + ' hängen</button><button type="button" class="btn small" data-act="doppelt-zeigen" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Bestehenden Beleg ansehen</button><button type="button" class="btn small ghost" data-act="doppelt-nein" data-g="' + g.gruppe + '">Ist kein Doppel</button></div>' : '') + '</div>';
     }
-    return zurueckNote(g) + autoNote + fremdNote + (t.length ? '<div class="note blue"><b>Von der App gelesen.</b> ' + t.join(' ') + '</div>' : '') + bisher + doppel;
+    return zurueckNote(g) + pruefNote(g) + autoNote + fremdNote + (t.length ? '<div class="note blue"><b>Von der App gelesen.</b> ' + t.join(' ') + '</div>' : '') + bisher + doppel;
   }
   function fragenBlock(tabelle, ids) {
     var fr = D.fragen.filter(function (f) { return f.tabelle === tabelle && ids.indexOf(f.datensatz) >= 0; });

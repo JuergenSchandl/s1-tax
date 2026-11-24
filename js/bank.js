@@ -56,6 +56,7 @@
     if (pdfjs) return Promise.resolve(pdfjs);
     return import(new URL('js/lib/pdf.min.mjs', document.baseURI).href).then(function (m) { m.GlobalWorkerOptions.workerSrc = new URL('js/lib/pdf.worker.min.mjs', document.baseURI).href; pdfjs = m; return m; });
   }
+  APP.pdfLaden = pdfLaden;
   function pdfLesen(file) {
     return Promise.all([pdfLaden(), file.arrayBuffer()]).then(function (r) {
       return r[0].getDocument({ data: new Uint8Array(r[1]) }).promise;
