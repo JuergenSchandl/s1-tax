@@ -8,9 +8,32 @@ import webpush from "npm:web-push@3.6.7";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import "./logic.js";
 
+// Rechenlogik: genau dieselbe Datei wie in der App (js/logic.js), fest auf einen Stand im Repo gebunden
+// und per Prüfsumme gesichert. Nach jeder Änderung an js/logic.js hier Stand und Prüfsumme nachziehen.
+// Klappt das Laden nicht, bleibt nur der alte Auszug (logic.js hier) – dann keine Erinnerungen mit Beträgen.
+const LOGIK = { commit: "15afa28db99f61b87509e561fbdffd70f522e751", sha256: "cbfa0188858b1bfd7c6194d2669d0d1e61c769902c26c01043f8169afc90f4a5" };
 // deno-lint-ignore no-explicit-any
 const G = globalThis as any;
-const L = G.L;
+// deno-lint-ignore no-explicit-any
+let L: any = G.L, logik = "auszug", logikFehler: string | null = null;
+async function ladeLogik() {
+  if (logik === "app") return;
+  try {
+    const r = await fetch(`https://raw.githubusercontent.com/JuergenSchandl/s1-tax/${LOGIK.commit}/js/logic.js`);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const buf = await r.arrayBuffer();
+    const h = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", buf))).map((b) => b.toString(16).padStart(2, "0")).join("");
+    if (h !== LOGIK.sha256) throw new Error("Prüfsumme passt nicht");
+    // deno-lint-ignore no-explicit-any
+    const m: any = { exports: {} };
+    new Function("module", new TextDecoder().decode(buf))(m);
+    if (!m.exports || typeof m.exports.termine !== "function" || typeof m.exports.uva !== "function") throw new Error("Rechenlogik unvollständig");
+    L = m.exports; logik = "app"; logikFehler = null;
+  } catch (e) {
+    logikFehler = String((e && (e as Error).message) || e).slice(0, 120);
+    console.error("Rechenlogik der App nicht geladen:", logikFehler);
+  }
+}
 // wie in js/rechnung.js der App: Vorlagentext füllen und Summen rechnen
 const R = {
   fuellen(text: string, felder: Record<string, string>) {
@@ -79,6 +102,7 @@ async function alle(sb: any, table: string) {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  await ladeLogik();
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
   const keys = await vapid(sb);
   const url = new URL(req.url);
@@ -110,6 +134,13 @@ Deno.serve(async (req) => {
   };
   // deno-lint-ignore no-explicit-any
   for (const t of ["belege", "bank", "ausgang", "monate"]) for (const r of (D as any)[t]) for (const k of ["netto", "ust", "brutto", "steuersatz", "betrag", "bezahlt_betrag", "uva_zahllast", "uva_bezahlt"]) if (typeof r[k] === "string") r[k] = Number(r[k]);
+  // Stand der Rechenlogik festhalten: die App vergleicht ihn mit ihrer eigenen und warnt bei Abweichung
+  const stand = { logik, sha256: logik === "app" ? LOGIK.sha256 : null, commit: logik === "app" ? LOGIK.commit : null, fehler: logikFehler };
+  // deno-lint-ignore no-explicit-any
+  const altStand: any = (D.einst.dienst || {}).erinnerungen || {};
+  if (altStand.logik !== stand.logik || altStand.sha256 !== stand.sha256 || (altStand.fehler || null) !== stand.fehler) {
+    await sb.from("einstellungen").upsert({ key: "dienst", value: { ...(D.einst.dienst || {}), erinnerungen: { ...stand, am: tag } } });
+  }
   // deno-lint-ignore no-explicit-any
   const name = (p: string) => ((D.members as any[]).find((m) => m.person === p) || {}).name || (p === "j" ? "Jürgen" : p === "d" ? "Dagmar" : "App");
   let gesendet = 0;
@@ -141,15 +172,15 @@ Deno.serve(async (req) => {
 
   const j = Number(tag.slice(0, 4)), mo = Number(tag.slice(5, 7)), d = Number(tag.slice(8, 10));
 
-  // UVA: 5 Tage vorher, am Vortag, am Tag
-  for (let i = -3; i <= -1; i++) {
+  // UVA: 5 Tage vorher, am Vortag, am Tag (nur mit der Rechenlogik der App, sonst lieber keine als falsche Beträge)
+  for (let i = -3; i <= -1 && logik === "app"; i++) {
     const x = L.monatPlus(j, mo, i), u = L.uva(D, x.jahr, x.monat), t = L.tageBis(u.faellig);
     if (u.erledigt || ![5, 1, 0].includes(t)) continue;
     const was = u.zahllast < 0 ? `Gutschrift ${L.eur(-u.zahllast)} melden` : u.gemeldet ? `${L.eur(u.zahllast)} überweisen` : `${L.eur(u.zahllast)} melden und überweisen`;
     await schick(`uva|${x.jahr}-${x.monat}|${t}`, ["j"], `UVA ${L.MONATE[x.monat]}`, `${was}, ${t === 0 ? "heute fällig" : t === 1 ? "morgen fällig" : "fällig am " + L.datum(u.faellig)}.`, `uva/${x.jahr}-${x.monat}`);
   }
   // ESt-Vorauszahlung und SVS
-  for (const t of L.termine(D, j)) {
+  for (const t of logik === "app" ? L.termine(D, j) : []) {
     if (t.art === "uva" || t.erledigt) continue;
     const tb = L.tageBis(t.datum);
     if ([5, 0].includes(tb)) await schick(`termin|${t.art}|${t.datum}|${tb}`, ["j"], t.titel, `${L.eur(t.betrag)} ${tb === 0 ? "heute fällig" : "fällig am " + L.datum(t.datum)}.`, "steuer");
@@ -198,5 +229,5 @@ Deno.serve(async (req) => {
       else console.error("entwurf", error.message);
     }
   }
-  return json({ tag, stunde, gesendet, entwuerfe });
+  return json({ tag, stunde, logik, logikFehler, gesendet, entwuerfe });
 });
