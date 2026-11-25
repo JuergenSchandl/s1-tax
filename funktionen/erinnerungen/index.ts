@@ -11,7 +11,7 @@ import "./logic.js";
 // Rechenlogik: genau dieselbe Datei wie in der App (js/logic.js), fest auf einen Stand im Repo gebunden
 // und per Prüfsumme gesichert. Nach jeder Änderung an js/logic.js hier Stand und Prüfsumme nachziehen.
 // Klappt das Laden nicht, bleibt nur der alte Auszug (logic.js hier) – dann keine Erinnerungen mit Beträgen.
-const LOGIK = { commit: "15afa28db99f61b87509e561fbdffd70f522e751", sha256: "cbfa0188858b1bfd7c6194d2669d0d1e61c769902c26c01043f8169afc90f4a5" };
+const LOGIK = { commit: "c455693a8bb84ba5446ecbde023a087d871cb19f", sha256: "65384c71e6d5ab84b519ef92885c917c7927d2dba023d7a7b9d27ced17629de9" };
 // deno-lint-ignore no-explicit-any
 const G = globalThis as any;
 // deno-lint-ignore no-explicit-any
