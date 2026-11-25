@@ -76,7 +76,7 @@
     if (aktiv.some(function (b) { return Number(b.konto) === 7652 && b.status !== 'privat' && !(b.bewirtung && b.bewirtung.mit); })) return null; /* Bewirtung: erst eintragen, mit wem */
     var ids = aktiv.map(function (b) { return b.id; });
     if ((D.fragen || []).some(function (f) { return !f.erledigt && ids.indexOf(f.datensatz) >= 0; })) return null;
-    if (aktiv.some(function (b) { var k = b.lesung && b.lesung.ki; return k && (k.doppelt || k.frage || k.an_s1 === false); })) return null;
+    if (aktiv.some(function (b) { var k = b.lesung && b.lesung.ki; return k && (k.doppelt || k.frage || k.an_s1 === false || (k.anzahlung && L.n(k.anzahlung.betrag) > 0)); })) return null;
     /* Datum passt zum Monat (höchstens zwei Monate daneben) */
     var dj = +g.datum.slice(0, 4), dm = +g.datum.slice(5, 7);
     if (Math.abs((dj * 12 + dm) - (g.jahr * 12 + g.monat)) > 2) return null;
@@ -228,8 +228,10 @@
     var bks = D.bank.filter(function (x) { return x.beleg_gruppe === g.gruppe; });
     if (!bks.length) { var bis = L.bankBis(D); return { stufe: 'offen', bis: bis, abgedeckt: !!(bis && g.datum && bis >= g.datum) }; }
     /* mehrere Abbuchungen zu einem Beleg (z. B. Uber-Fahrten einer Reise) zählen zusammen */
-    var betrag = L.r2(bks.reduce(function (n, x) { return n + Math.abs(L.n(x.betrag)); }, 0)), diff = L.r2(betrag - s.brutto);
-    return { stufe: Math.abs(diff) <= 0.05 ? 'ok' : 'diff', rund: Math.abs(diff) > 0.01 && Math.abs(diff) <= 0.05, bank: bks[0], n: bks.length, betrag: betrag, diff: diff };
+    /* ein Teil bar bezahlt (z. B. Anzahlung): vom Konto kommt nur der Rest */
+    var bar = L.barAnteil(g), soll = L.r2(s.brutto - bar);
+    var betrag = L.r2(bks.reduce(function (n, x) { return n + Math.abs(L.n(x.betrag)); }, 0)), diff = L.r2(betrag - soll);
+    return { stufe: Math.abs(diff) <= 0.05 ? 'ok' : 'diff', rund: Math.abs(diff) > 0.01 && Math.abs(diff) <= 0.05, bank: bks[0], n: bks.length, betrag: betrag, diff: diff, bar: bar, soll: soll };
   };
   /* Wie sicher sind die Werte eines Belegs? Zeilen für die Anzeige und ob die App ihn selbst bestätigen darf */
   L.sicherheit = function (D, g) {
@@ -258,8 +260,8 @@
     else if (p && p.quelle === 'fehler') z.push({ a: 'info', t: 'Das Dokument ließ sich nicht prüfen.' });
     else if (s.f.datei) z.push({ a: 'info', t: 'Noch nicht gegen das Dokument geprüft.', pruefen: /\.pdf$/i.test(s.f.datei) });
     var bp = L.bankProbe(D, g);
-    if (bp && bp.stufe === 'ok') z.push({ a: 'ok', t: (bp.n > 1 ? bp.n + ' Abbuchungen ab ' : 'Abbuchung am ') + L.datum(bp.bank.datum) + ' über ' + L.eur(bp.betrag) + (bp.rund ? ' stimmt bis auf ' + L.eur(Math.abs(bp.diff)) + ' Rundung.' : ' stimmt.') });
-    else if (bp && bp.stufe === 'diff') { ok = false; z.push({ a: 'bad', t: 'Abbuchung am ' + L.datum(bp.bank.datum) + ' über ' + L.eur(bp.betrag) + ': ' + L.eur(Math.abs(bp.diff)) + (bp.diff > 0 ? ' mehr' : ' weniger') + ' als der Beleg.' }); }
+    if (bp && bp.stufe === 'ok') z.push({ a: 'ok', t: (bp.n > 1 ? bp.n + ' Abbuchungen ab ' : 'Abbuchung am ') + L.datum(bp.bank.datum) + ' über ' + L.eur(bp.betrag) + (bp.bar ? ' plus ' + L.eur(bp.bar) + ' bar' : '') + (bp.rund ? ' stimmt bis auf ' + L.eur(Math.abs(bp.diff)) + ' Rundung.' : ' stimmt.') });
+    else if (bp && bp.stufe === 'diff') { ok = false; z.push({ a: 'bad', t: 'Abbuchung am ' + L.datum(bp.bank.datum) + ' über ' + L.eur(bp.betrag) + ': ' + L.eur(Math.abs(bp.diff)) + (bp.diff > 0 ? ' mehr' : ' weniger') + ' als ' + (bp.bar ? 'erwartet (Beleg ' + L.eur(s.brutto) + ' minus ' + L.eur(bp.bar) + ' bar).' : 'der Beleg.') + (bp.diff < 0 && !bp.bar ? ' War der Rest bar bezahlt (Anzahlung)?' : '') }); }
     /* noch keine Abbuchung: das sagt schon der Hinweis „noch nicht bezahlt“ im Beleg */
     var stufe = z.some(function (x) { return x.a === 'bad'; }) ? 'bad' : z.some(function (x) { return x.a === 'warn'; }) ? 'warn' : ok ? (bp && bp.stufe === 'offen' ? 'vorlaeufig' : 'geprueft') : 'offen';
     return { ok: ok, kurz: kurz, zeilen: z, stufe: stufe, bank: bp };
@@ -308,7 +310,11 @@
         if (b.status === 'unklar') g.status = 'unklar';
         if (!b.bestaetigt) g.bestaetigt = false;
         if (b.datei && !g.datei) g.datei = b.datei;
+        if (b.seiten && b.seiten.length && !g.seiten) g.seiten = b.seiten.slice();
+        if (L.n(b.bar_anteil) > 0 && !g.bar_anteil) g.bar_anteil = L.r2(L.n(b.bar_anteil));
       });
+      if (!g.seiten) g.seiten = [];
+      if (!g.bar_anteil) g.bar_anteil = null;
       g.brutto = L.r2(g.brutto); g.netto = L.r2(g.netto); g.ust = L.r2(g.ust);
       g.storniert = g.rows.every(function (b) { return b.storniert; });
       /* einzelne Zeilen können privat sein (z. B. Getränk auf der Tankrechnung): ganz privat nur, wenn alle Zeilen privat sind */
@@ -323,17 +329,31 @@
     });
     return out;
   };
+  /* alle Dateien eines Belegs: Seite 1 und weitere Seiten */
+  L.dateien = function (g) {
+    var out = [];
+    [g && g.datei].concat((g && g.seiten) || []).forEach(function (p) { if (p && out.indexOf(p) < 0) out.push(p); });
+    return out;
+  };
+  /* Teil bar bezahlt (z. B. Anzahlung), der Rest über das Konto; bei reinen Barbelegen 0 */
+  L.barAnteil = function (g) {
+    if (!g || g.zahlung !== 'bank') return 0;
+    var b = L.r2(L.n(g.bar_anteil));
+    return b > 0 ? Math.min(b, L.r2(L.n(g.brutto))) : 0;
+  };
+  /* so viel muss vom Konto abgehen */
+  L.bankSoll = function (g) { return L.r2(L.n(g.brutto) - L.barAnteil(g)); };
   L.sortBelege = function (a, b) {
     if (a.nr && b.nr) return a.nr - b.nr;
     if (a.nr) return -1; if (b.nr) return 1;
     if (a.zahlung !== b.zahlung) return a.zahlung === 'bank' ? -1 : 1;
     return String(a.datum || '9').localeCompare(String(b.datum || '9'));
   };
-  L.dateiname = function (g) {
+  L.dateiname = function (g, seite, pfad) {
     var nr = g.nr ? g.nr + '-' + String(g.jahr).slice(2) : 'neu-' + String(g.gruppe).slice(0, 6);
     var name = String(g.lieferant || 'Beleg').normalize('NFD').replace(/\p{M}/gu, '').replace(/ß/g, 'ss').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'Beleg';
-    var ext = (String(g.datei || '').match(/\.([a-z0-9]+)$/i) || [, 'pdf'])[1].toLowerCase();
-    return nr + '_' + name + '_' + L.fmt(g.brutto).replace(/\./g, '').replace('−', '-') + '.' + ext;
+    var ext = (String(pfad || g.datei || '').match(/\.([a-z0-9]+)$/i) || [, 'pdf'])[1].toLowerCase();
+    return nr + '_' + name + '_' + L.fmt(g.brutto).replace(/\./g, '').replace('−', '-') + (seite > 1 ? '_Seite-' + seite : '') + '.' + ext;
   };
 
   /* ---------- Ausgangsrechnungen ---------- */
@@ -578,14 +598,16 @@
         if (v.gruppe[g.gruppe] && v.gruppe[g.gruppe].id !== bk.id) return;
         var dm = (g.jahr * 12 + g.monat) - (bk.jahr * 12 + bk.monat);
         var tage = g.datum ? Math.abs(L.tageBis(g.datum, bk.datum)) : 0;
-        var gleich = Math.abs(g.brutto - amt) < 0.005, name = L.aehnlich(bk.name + ' ' + bk.info, g.lieferant + ' ' + g.text);
-        var score = (gleich ? 100 : Math.abs(g.brutto - amt) < Math.max(1, amt * 0.05) ? 30 : 0) + (name ? 40 : 0) - Math.abs(dm) * 10 - Math.min(tage, 30);
+        var soll = L.bankSoll(g), gleich = Math.abs(soll - amt) < 0.005, name = L.aehnlich(bk.name + ' ' + bk.info, g.lieferant + ' ' + g.text);
+        var score = (gleich ? 100 : Math.abs(soll - amt) < Math.max(1, amt * 0.05) ? 30 : 0) + (name ? 40 : 0) - Math.abs(dm) * 10 - Math.min(tage, 30);
+        /* weniger abgebucht als der Beleg, gleicher Lieferant: vielleicht der Rest bar (Anzahlung) */
+        var rest = !gleich && name && !L.barAnteil(g) && amt > 0 && amt < g.brutto - 0.005 ? L.r2(g.brutto - amt) : 0;
         var bar = g.zahlung === 'bar';
         var spaeter = gleich && name && g.zahlung === 'bank' && g.datum && bk.datum >= g.datum && L.tageBis(bk.datum, g.datum) <= 75 && dm <= 0 && dm >= -3;
         if (!alle && (!gleich || Math.abs(dm) > 1 || tage > 12) && !spaeter) return;
         if (!alle && bar && (!name || tage > 5)) return;
         if (alle && score < 0 && !name && !gleich) return;
-        out.push({ art: 'beleg', g: g, gleich: gleich, name: name, bar: bar, score: score - (bar ? 15 : 0) });
+        out.push({ art: 'beleg', g: g, gleich: gleich, name: name, bar: bar, rest: rest, score: score - (bar ? 15 : 0) });
       });
     } else {
       D.ausgang.forEach(function (a) {
@@ -671,7 +693,7 @@
       });
       if (teile.length < 2) return;
       var summe = L.r2(teile.reduce(function (n, bk) { return n - L.n(bk.betrag); }, 0));
-      if (Math.abs(summe - g.brutto) > 0.005) return;
+      if (Math.abs(summe - L.bankSoll(g)) > 0.005) return;
       belegt[g.gruppe] = 1;
       teile.forEach(function (bk) { erledigt[bk.id] = 1; out.push({ bank: bk, patch: { art: 'beleg', beleg_gruppe: g.gruppe }, monatNeu: !g.nr && (g.jahr !== bk.jahr || g.monat !== bk.monat) ? { gruppe: g.gruppe, jahr: bk.jahr, monat: bk.monat } : null }); });
     });
@@ -735,7 +757,8 @@
         if (!k) { k = { konto: b.konto, rows: [] }; proKonto.push(k); }
         k.rows.push(b);
       });
-      proKonto.forEach(function (k) {
+      var barG = L.barAnteil(g);
+      proKonto.forEach(function (k, ki) {
         var b0 = k.rows[0], ri = rows.length + 1;
         var brutto = L.r2(k.rows.reduce(function (n, b) { return n + L.n(b.brutto); }, 0));
         var netto = k.rows.length > 1 ? { f: '=' + k.rows.map(function (b) { return L.r2(b.netto); }).join('+'), s: 'buch' } : { v: L.r2(b0.netto), s: 'buch' };
@@ -744,6 +767,7 @@
         if (b0.steuerart === 'ig') hinw.push('ig Erwerb ' + (b0.steuersatz || 20) + ' %');
         if (b0.steuerart === 'ausland') hinw.push('ausländische Steuer, keine Vorsteuer');
         if (b0.anlage) hinw.push('Anlagegut');
+        if (barG && ki === 0) hinw.push('davon ' + L.eur(barG) + ' bar angezahlt, ' + L.eur(L.bankSoll(g)) + ' vom Konto');
         if (b0.status === 'unklar') hinw.push('unklar');
         if (b0.waehrung && b0.waehrung !== 'EUR') hinw.push('Währung ' + b0.waehrung);
         rows.push([{ v: g.datum || null, t: 'd', s: 'datum' }, g.lieferant, '', b0.text + L.bewirtungText(g), Number(b0.konto) || null, { v: brutto, s: 'buch' }, netto, { f: '=F' + ri + '-G' + ri, s: 'buch' }, g.zahlung === 'bar' ? 'Barbeleg' : auszug, { v: L.belegNr(g) || 'neu', t: 's', s: 'text' }, hinw.join(', ') || null]);
@@ -952,7 +976,7 @@
     /* Rechnungen, die schon lange auf die Zahlung warten */
     var wt = L.wartend(D);
     L.gruppen(D.belege, function (b) { return wt[b.gruppe]; }).forEach(function (g) {
-      if (g.datum && L.tageBis(heute, g.datum) > 45) add('info', 'Zahlung', (g.lieferant || 'Rechnung') + ' vom ' + L.datum(g.datum) + ' über ' + L.eur(g.brutto) + ': laut Kontoauszug noch nicht bezahlt', 'monat:' + g.jahr + '-' + g.monat);
+      if (g.datum && L.tageBis(heute, g.datum) > 45) add('info', 'Zahlung', (g.lieferant || 'Rechnung') + ' vom ' + L.datum(g.datum) + ' über ' + L.eur(L.bankSoll(g)) + ': laut Kontoauszug noch nicht bezahlt', 'monat:' + g.jahr + '-' + g.monat);
     });
     /* 3. Belegnummern lückenlos */
     [j0, j0 + 1].forEach(function (jj) {
@@ -969,7 +993,8 @@
       if (!rows.length) { add('warn', 'Bank', L.datum(erst.datum) + ' ' + erst.name + ': der zugeordnete Beleg fehlt', 'bank:' + erst.jahr + '-' + erst.monat); return; }
       var gg = L.gruppen(rows)[0];
       if (gg.storniert) { add('warn', 'Bank', L.datum(erst.datum) + ' ' + erst.name + ': der zugeordnete Beleg ist storniert', 'bank:' + erst.jahr + '-' + erst.monat); return; }
-      if (Math.abs(summe - gg.brutto) > 0.05) add('warn', 'Bank', L.datum(erst.datum) + ' ' + erst.name + ': abgebucht ' + L.eur(summe) + ', Beleg ' + L.eur(gg.brutto) + ' (Differenz ' + L.eur(L.r2(summe - gg.brutto)) + ')', 'bank:' + erst.jahr + '-' + erst.monat);
+      var soll = L.bankSoll(gg), bar = L.barAnteil(gg);
+      if (Math.abs(summe - soll) > 0.05) add('warn', 'Bank', L.datum(erst.datum) + ' ' + erst.name + ': abgebucht ' + L.eur(summe) + ', Beleg ' + L.eur(gg.brutto) + (bar ? ' minus ' + L.eur(bar) + ' bar' : '') + ' (Differenz ' + L.eur(L.r2(summe - soll)) + ')', 'bank:' + erst.jahr + '-' + erst.monat);
     });
     /* 5. dieselbe Datei zweimal */
     var hs = {};

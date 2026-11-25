@@ -224,8 +224,10 @@
         var gr = L.gruppen(D.belege, function (b) { return b.jahr === j && !!b.datei && L.zaehlt(b); });
         var ar = D.ausgang.filter(function (a) { return a.jahr === j && a.datei; });
         var az = (D.einst.auszuege || []).filter(function (x) { return x.indexOf(j + '/') === 0; });
-        var n = 0, total = gr.length + ar.length + az.length;
-        gr.forEach(function (g) { p = p.then(function () { stand('Belege: ' + (++n) + ' von ' + total); return APP.herunterladen('belege', g.datei); }).then(function (b) { zip.file('Belege/' + L.p2(g.monat) + '/' + L.dateiname(g), b); }); });
+        var n = 0, total = gr.reduce(function (x, g) { return x + L.dateien(g).length; }, 0) + ar.length + az.length;
+        gr.forEach(function (g) {
+          L.dateien(g).forEach(function (pfad, i) { p = p.then(function () { stand('Belege: ' + (++n) + ' von ' + total); return APP.herunterladen('belege', pfad); }).then(function (b) { zip.file('Belege/' + L.p2(g.monat) + '/' + L.dateiname(g, i + 1, pfad), b); }); });
+        });
         ar.forEach(function (a) { p = p.then(function () { stand('Dateien: ' + (++n) + ' von ' + total); return APP.herunterladen('rechnungen', a.datei); }).then(function (b) { zip.file('Ausgangsrechnungen/Re_' + String(a.nr).replace('/', '-') + '_' + a.kunde.replace(/[^\wÄÖÜäöüß.-]+/g, '-') + '.pdf', b); }); });
         az.forEach(function (x) { p = p.then(function () { stand('Dateien: ' + (++n) + ' von ' + total); return APP.herunterladen('belege', x); }).then(function (b) { zip.file('Kontoauszuege/' + x.split('/').pop(), b); }); });
         var namen = {};

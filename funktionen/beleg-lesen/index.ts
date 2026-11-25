@@ -46,11 +46,13 @@ ${regeln.map((x) => `- ${x.lieferant}${x.ab ? ` (gilt nur für Rechnungen mit Da
 }
 
 // deno-lint-ignore no-explicit-any
-function prompt(verlauf: string, bank: { datum?: string; betrag?: number; name?: string } | null, regeln: any[] = []) {
+function prompt(verlauf: string, bank: { datum?: string; betrag?: number; name?: string } | null, regeln: any[] = [], seiten = 1) {
   return `Du liest einen Beleg (Rechnung, Kassabon oder Quittung) oder ein Schreiben einer Behörde für das österreichische Einzelunternehmen
 S1 Secure e.U. (Inhaber Jürgen Schandl, Doppelngasse 113, 3400 Klosterneuburg, UID ATU68636158).
 Die Firma versteuert nach vereinnahmten Entgelten und ist vorsteuerabzugsberechtigt.
-${bank ? `Diese Rechnung wurde am ${bank.datum} mit ${Math.abs(Number(bank.betrag)).toFixed(2)} EUR vom Konto bezahlt (Buchungstext: ${bank.name}).\n` : ""}
+${seiten > 1 ? `Der Beleg besteht aus ${seiten} Dateien (Seite 1 ist meist die Rechnung, weitere Seiten z. B. Auftrag, Lieferschein, Anzahlungsbeleg, Kartenbeleg oder Rückseite).
+Lies alles als EINEN Beleg: Beträge, Datum und Rechnungsnummer von der Rechnung, Zahlungen und Anzahlungen von allen Seiten. Zähle nichts doppelt.
+` : ""}${bank ? `Diese Rechnung wurde am ${bank.datum} mit ${Math.abs(Number(bank.betrag)).toFixed(2)} EUR vom Konto bezahlt (Buchungstext: ${bank.name}).\n` : ""}
 Antworte NUR mit einem JSON-Objekt, ohne Erklärung davor oder danach, in genau diesem Aufbau:
 {
   "datum": "JJJJ-MM-TT (Rechnungs- bzw. Belegdatum)",
@@ -62,6 +64,7 @@ Antworte NUR mit einem JSON-Objekt, ohne Erklärung davor oder danach, in genau 
   "waehrung": "ISO-Währung des Betrags auf dem Beleg, z. B. EUR",
   "fremdbetrag": "Bruttobetrag in Fremdwährung, wenn nicht EUR, sonst null",
   "zahlungsart": "karte, bar, ueberweisung oder null (wie bezahlt wurde)",
+  "anzahlung": null,
   "dokumentart": "beleg oder behoerde",
   "behoerde": null,
   "empfaenger": "an wen die Rechnung adressiert ist (Firma oder Name, wie auf dem Beleg), null bei Kassabon ohne Empfänger",
@@ -97,6 +100,10 @@ ${Object.entries(KONTEN_HAEUFIG).map(([k, v]) => `  ${k} ${v}`).join("\n")}
   spanisch Tarjeta, Datáfono; französisch CB, Carte bancaire). "bar" bei Barzahlung (Bar, Barzahlung, gegeben, Rückgeld, Retour; Contanti,
   Efectivo, Espèces, Cash). "ueberweisung" bei Rechnungen, die per Überweisung, SEPA-Lastschrift, Einzug oder PayPal bezahlt werden oder
   online schon bezahlt sind. null, wenn auf dem Beleg nicht erkennbar.
+- anzahlung: nur wenn auf dem Beleg eine Anzahlung oder Teilzahlung steht, die schon vorher bezahlt wurde (Anzahlung, a conto, bereits bezahlt,
+  erhalten, Entrega a cuenta, A cuenta, Pagado a cuenta, Acconto, Caparra, Acompte, Deposit, Down payment):
+  { "betrag": 0.00, "art": "bar", "karte", "ueberweisung" oder null }. Sonst null. "zahlungsart" gilt dann für den Rest.
+  Auch bei einer Anzahlung enthalten die "zeilen" den GANZEN Rechnungsbetrag (inklusive Anzahlung), nicht nur den offenen Rest.
 - dokumentart: "beleg" bei Rechnung, Kassabon, Quittung oder Gutschrift (etwas wurde gekauft, bezahlt oder verrechnet).
   "behoerde" bei Post vom Finanzamt, der SVS bzw. Sozialversicherung, der Gemeinde oder der Kammer, die keine Rechnung ist:
   Bescheid, Benachrichtigung über Vorauszahlungen, Buchungsmitteilung, Beitragsvorschreibung, Kontoauszug des Abgabenkontos, Erinnerung.
@@ -206,12 +213,24 @@ Deno.serve(async (req) => {
   const { data: row, error: e1 } = await sb.from("belege").select("*").eq("id", body.id).single();
   if (e1 || !row) return json({ error: "Beleg nicht gefunden." }, 404);
   if (!row.datei) return json({ error: "Der Beleg hat keine Datei." }, 400);
-  const { data: file, error: e2 } = await sb.storage.from("belege").download(row.datei);
-  if (e2 || !file) return json({ error: "Datei nicht gefunden." }, 404);
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const ext = String(row.datei).split(".").pop()!.toLowerCase();
-  const media = ext === "pdf" ? "application/pdf" : ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : ext === "heic" ? "image/heic" : "image/jpeg";
-  if (media === "image/heic") return json({ error: "HEIC-Fotos kann die App nicht lesen. Bitte als JPG fotografieren." }, 415);
+  // Seite 1 und weitere Seiten (Auftrag, Lieferschein, Anzahlung …), höchstens 6 Dateien
+  const pfade = [row.datei, ...(Array.isArray(row.seiten) ? row.seiten : [])].filter((p: string, i: number, a: string[]) => p && a.indexOf(p) === i).slice(0, 6);
+  // deno-lint-ignore no-explicit-any
+  const bloecke: any[] = [];
+  let media = "image/jpeg";
+  for (const pfad of pfade) {
+    const { data: file, error: e2 } = await sb.storage.from("belege").download(pfad);
+    if (e2 || !file) return json({ error: pfad === row.datei ? "Datei nicht gefunden." : "Eine weitere Seite wurde nicht gefunden." }, 404);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const ext = String(pfad).split(".").pop()!.toLowerCase();
+    const mt = ext === "pdf" ? "application/pdf" : ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : ext === "heic" ? "image/heic" : "image/jpeg";
+    if (mt === "image/heic") return json({ error: "HEIC-Fotos kann die App nicht lesen. Bitte als JPG fotografieren." }, 415);
+    if (pfad === row.datei) media = mt;
+    bloecke.push(mt === "application/pdf"
+      ? { type: "document", source: { type: "base64", media_type: mt, data: encodeBase64(bytes) } }
+      : { type: "image", source: { type: "base64", media_type: mt, data: encodeBase64(bytes) } });
+  }
+  const mitFoto = bloecke.some((b) => b.type === "image");
 
   // bisherige Zuordnungen: je Lieferant, welche Konten und Steuerarten wie oft (bestätigt, nicht privat)
   const { data: alt } = await sb.from("belege").select("lieferant, konto, text, steuerart, steuersatz, datum, status").eq("bestaetigt", true).eq("storniert", false).neq("lieferant", "").order("datum", { ascending: false }).limit(2000);
@@ -230,22 +249,17 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const regeln: any[] = Array.isArray(rg && rg.value) ? rg.value.filter((x: any) => x && x.lieferant) : [];
 
-  const content = [
-    media === "application/pdf"
-      ? { type: "document", source: { type: "base64", media_type: media, data: encodeBase64(bytes) } }
-      : { type: "image", source: { type: "base64", media_type: media, data: encodeBase64(bytes) } },
-    { type: "text", text: prompt(verlauf.join("\n"), body.bank || null, regeln) },
-  ];
+  const content = [...bloecke, { type: "text", text: prompt(verlauf.join("\n"), body.bank || null, regeln, bloecke.length) }];
   // Fotos und Scans ohne Text: gleichzeitig eine zweite, unabhängige Lesung nur der Summen (Gegenprobe)
   const KONTROLLE = `Lies auf diesem Beleg nur diese Werte und antworte nur mit JSON, ohne Erklärung:
-{"brutto": Gesamtbetrag, der bezahlt wurde (inkl. Steuer), "ust": Summe der ausgewiesenen Umsatzsteuer/MwSt/IVA/TVA (0, wenn keine ausgewiesen ist), "datum": "JJJJ-MM-TT" oder null, "waehrung": "EUR"}
-Beträge als Zahl mit Punkt, z. B. 12.40. Rechne nichts aus, lies die Werte, die auf dem Beleg stehen.`;
+{"brutto": Gesamtbetrag der Rechnung (inkl. Steuer; bei einer Anzahlung der ganze Betrag, nicht der Rest), "ust": Summe der ausgewiesenen Umsatzsteuer/MwSt/IVA/TVA (0, wenn keine ausgewiesen ist), "datum": "JJJJ-MM-TT" oder null, "waehrung": "EUR"}
+Beträge als Zahl mit Punkt, z. B. 12.40. Rechne nichts aus, lies die Werte, die auf dem Beleg stehen.${bloecke.length > 1 ? " Der Beleg hat mehrere Seiten, zähle nichts doppelt." : ""}`;
   // deno-lint-ignore no-explicit-any
-  const zweitP: Promise<any> = (body.zweit || media !== "application/pdf")
+  const zweitP: Promise<any> = (body.zweit || media !== "application/pdf" || mitFoto)
     ? fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model: modell, max_tokens: 300, messages: [{ role: "user", content: [content[0], { type: "text", text: KONTROLLE }] }] }),
+      body: JSON.stringify({ model: modell, max_tokens: 300, messages: [{ role: "user", content: [...bloecke, { type: "text", text: KONTROLLE }] }] }),
     }).then(async (r2) => {
       if (!r2.ok) throw new Error("HTTP " + r2.status);
       const o2 = await r2.json();
@@ -361,9 +375,18 @@ Beträge als Zahl mit Punkt, z. B. 12.40. Rechne nichts aus, lies die Werte, die
   // wie bezahlt: Karte oder Überweisung läuft über das Konto, sonst bar; nicht erkennbar = wie bisher
   const za = String(r.zahlungsart || "").toLowerCase();
   const { data: verbunden } = await sb.from("bank").select("id").eq("beleg_gruppe", row.gruppe).limit(1);
-  const zahlung = body.bank || (verbunden && verbunden.length) ? "bank" : za === "bar" ? "bar" : (za === "karte" || za === "ueberweisung") ? "bank" : row.zahlung;
+  let zahlung = body.bank || (verbunden && verbunden.length) ? "bank" : za === "bar" ? "bar" : (za === "karte" || za === "ueberweisung") ? "bank" : row.zahlung;
+  // Anzahlung auf dem Beleg: war sie bar und lief der Rest über das Konto, erwartet die App vom Konto nur den Rest
+  const anzArt = r.anzahlung && ["bar", "karte", "ueberweisung"].includes(String(r.anzahlung.art)) ? String(r.anzahlung.art) : null;
+  const anzahlung = r.anzahlung && zahl(r.anzahlung.betrag) > 0 && zahl(r.anzahlung.betrag) < Math.abs(brutto) ? { betrag: zahl(r.anzahlung.betrag), art: anzArt } : null;
+  r.anzahlung = anzahlung;
+  let barAnteil: number | null = Number(row.bar_anteil) > 0 ? zahl(row.bar_anteil) : null;
+  if (anzahlung && anzahlung.art === "bar" && za !== "bar" && (za === "karte" || za === "ueberweisung" || zahlung === "bank")) { zahlung = "bank"; barAnteil = anzahlung.betrag; }
+  if (zahlung !== "bank" || (barAnteil !== null && barAnteil >= Math.abs(brutto))) barAnteil = null;
   const gemeinsam = {
     zahlung,
+    bar_anteil: barAnteil,
+    seiten: Array.isArray(row.seiten) && row.seiten.length ? row.seiten : null,
     datum: /^\d{4}-\d{2}-\d{2}$/.test(r.datum || "") ? r.datum : null,
     lieferant: String(r.lieferant || "").slice(0, 120),
     rechnungsnr: r.rechnungsnr ? String(r.rechnungsnr).slice(0, 80) : null,
@@ -392,5 +415,5 @@ Beträge als Zahl mit Punkt, z. B. 12.40. Rechne nichts aus, lies die Werte, die
     if (e4) return json({ error: e4.message }, 500);
   }
   if (frage) await sb.from("fragen").insert({ tabelle: "belege", datensatz: row.id, jahr: row.jahr, monat: row.monat, text: frage, von: "app", an: "j" });
-  return json({ ok: true, zeilen: zeilen.length, brutto, doppelt, doppelt_gruppe: doppeltGruppe, frage, zahlung, fremd, kontrolle: kontrolle || null });
+  return json({ ok: true, zeilen: zeilen.length, brutto, doppelt, doppelt_gruppe: doppeltGruppe, frage, zahlung, fremd, kontrolle: kontrolle || null, seiten: bloecke.length, anzahlung, bar_anteil: barAnteil });
 });

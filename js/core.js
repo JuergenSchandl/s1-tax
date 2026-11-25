@@ -6,7 +6,7 @@
   var CFG = window.S1_CONFIG || {};
   var L = window.L;
   var APP = window.APP = {
-    VERSION: '2026.11.25a',
+    VERSION: '2026.11.25b',
     CFG: CFG,
     sb: null,
     D: { belege: [], bank: [], ausgang: [], kunden: [], monate: [], einst: {}, fragen: [], hinweise: {}, members: [] },
@@ -131,7 +131,7 @@
       var done = false;
       APP.modal({
         title: opt.title || 'Bitte bestätigen', body: '<p style="margin:0">' + text + '</p>',
-        foot: '<button type="button" class="btn" data-act="schliessen">Abbrechen</button><button type="button" class="btn ' + (opt.danger ? 'danger' : 'pri') + '" id="ok-btn">' + APP.h(ok || 'OK') + '</button>',
+        foot: '<button type="button" class="btn" data-act="schliessen">' + APP.h(opt.nein || 'Abbrechen') + '</button><button type="button" class="btn ' + (opt.danger ? 'danger' : 'pri') + '" id="ok-btn">' + APP.h(ok || 'OK') + '</button>',
         onClose: function () { if (!done) res(false); }
       });
       document.getElementById('ok-btn').onclick = function () { done = true; APP.schliessen(); res(true); };

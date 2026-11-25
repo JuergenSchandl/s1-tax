@@ -9,7 +9,7 @@
   function verknuepfung(b) {
     if (b.beleg_gruppe) {
       var g = L.gruppen(D.belege, function (x) { return x.gruppe === b.beleg_gruppe; })[0];
-      if (g) return '<a href="#" data-act="beleg" data-g="' + g.gruppe + '">' + (L.belegNr(g) || 'neu') + ' · ' + h(g.lieferant) + '</a>' + (Math.abs(g.brutto + b.betrag) > 0.005 && !g.storniert ? ' <span class="chip warn">Beleg ' + L.fmt(g.brutto) + '</span>' : '') + (g.storniert ? ' <span class="chip bad">Beleg storniert</span>' : '');
+      if (g) return '<a href="#" data-act="beleg" data-g="' + g.gruppe + '">' + (L.belegNr(g) || 'neu') + ' · ' + h(g.lieferant) + '</a>' + (L.barAnteil(g) ? ' <span class="chip">+ ' + L.fmt(L.barAnteil(g)) + ' bar</span>' : '') + (D.bank.filter(function (x) { return x.beleg_gruppe === g.gruppe; }).length === 1 && Math.abs(L.bankSoll(g) + b.betrag) > 0.005 && !g.storniert ? ' <span class="chip warn">Beleg ' + L.fmt(g.brutto) + '</span>' : '') + (g.storniert ? ' <span class="chip bad">Beleg storniert</span>' : '');
     }
     if (b.ausgang_id) { var a = D.ausgang.find(function (x) { return x.id === b.ausgang_id; }); if (a) return 'Rechnung ' + h(a.nr) + ' · ' + h(a.kunde); }
     return h(b.notiz || '');
@@ -187,7 +187,7 @@
     }
     if (!zugeordnet || b.art === 'beleg' || b.art === 'ausgang') {
       body += '<h3>' + (b.betrag < 0 ? 'Passende Belege' : 'Offene Ausgangsrechnungen') + '</h3>' + (kand.length ? '<div class="list card flat" style="padding:0">' + kand.map(function (k) {
-        if (k.art === 'beleg') return '<button type="button" class="item" data-act="bank-zu" data-id="' + b.id + '" data-g="' + k.g.gruppe + '"><div class="grow"><span class="t">' + h(k.g.lieferant || '(ohne Namen)') + '</span><span class="s">' + (L.belegNr(k.g) || 'neu') + ' · ' + L.MONATE[k.g.monat] + ' · ' + L.datum(k.g.datum) + ' · ' + h(k.g.text) + '</span></div><span class="amt">' + L.eur(k.g.brutto) + '</span>' + (k.gleich ? '<span class="chip ok">Betrag gleich</span>' : '') + (k.bar ? '<span class="chip yel">als bar erfasst, wird Karte</span>' : '') + '</button>';
+        if (k.art === 'beleg') return '<button type="button" class="item" data-act="bank-zu" data-id="' + b.id + '" data-g="' + k.g.gruppe + '"><div class="grow"><span class="t">' + h(k.g.lieferant || '(ohne Namen)') + '</span><span class="s">' + (L.belegNr(k.g) || 'neu') + ' · ' + L.MONATE[k.g.monat] + ' · ' + L.datum(k.g.datum) + ' · ' + h(k.g.text) + '</span></div><span class="amt">' + L.eur(k.g.brutto) + '</span>' + (k.gleich ? '<span class="chip ok">Betrag gleich</span>' : '') + (k.bar ? '<span class="chip yel">als bar erfasst, wird Karte</span>' : '') + (L.barAnteil(k.g) ? '<span class="chip">davon ' + L.fmt(L.barAnteil(k.g)) + ' bar</span>' : '') + (k.rest ? '<span class="chip yel">' + L.fmt(k.rest) + ' bar angezahlt?</span>' : '') + '</button>';
         return '<button type="button" class="item" data-act="bank-zu" data-id="' + b.id + '" data-a="' + k.a.id + '"><div class="grow"><span class="t">Rechnung ' + h(k.a.nr) + ' · ' + h(k.a.kunde) + '</span><span class="s">vom ' + L.datum(k.a.datum) + (k.a.bezahlt_betrag !== null && !k.a.bezahlt_am ? ' · laut Liste bezahlt' : '') + '</span></div><span class="amt">' + L.eur(k.a.brutto) + '</span>' + (k.gleich ? '<span class="chip ok">Betrag gleich</span>' : '') + (k.nr ? '<span class="chip ok">Nummer im Text</span>' : '') + '</button>';
       }).join('') + '</div>' : '<div class="s">Kein passender Eintrag gefunden.</div>');
     }
@@ -208,8 +208,15 @@
       /* auch mehrere Abbuchungen für einen Beleg: stimmt die Summe, ist alles in Ordnung */
       var andere = D.bank.filter(function (x) { return x.beleg_gruppe === g.gruppe && x.id !== b.id; });
       var summe = L.r2(andere.concat([b]).reduce(function (n, x) { return n - L.n(x.betrag); }, 0));
-      var passt = Math.abs(summe - g.brutto) < 0.005;
-      return APP.upd('bank', { id: b.id }, { art: passt ? 'beleg' : 'differenz', beleg_gruppe: g.gruppe, ausgang_id: null, notiz: passt ? b.notiz : 'Konto ' + L.fmt(summe) + ' €, Beleg ' + L.fmt(g.brutto) + ' €' }).then(function () {
+      var soll = L.bankSoll(g), passt = Math.abs(summe - soll) < 0.005;
+      /* weniger abgebucht als der Beleg: vielleicht wurde der Rest bar bezahlt (Anzahlung) */
+      var rest = !passt && !L.barAnteil(g) && summe > 0 && summe < g.brutto ? L.r2(g.brutto - summe) : 0;
+      var frage = rest ? APP.bestaetigen('Vom Konto gingen ' + L.eur(summe) + ' ab, der Beleg hat ' + L.eur(g.brutto) + '. Wurden die restlichen <b>' + L.eur(rest) + ' bar</b> bezahlt, z. B. als Anzahlung?', 'Ja, ' + L.eur(rest) + ' bar', { title: 'Rest bar bezahlt?', nein: 'Nein, als Differenz' }) : Promise.resolve(false);
+      return frage.then(function (bar) {
+        if (bar) { passt = true; return Promise.all(D.belege.filter(function (x) { return x.gruppe === g.gruppe; }).map(function (x) { return APP.upd('belege', { id: x.id }, { zahlung: 'bank', bar_anteil: rest }); })); }
+      }).then(function () {
+      return APP.upd('bank', { id: b.id }, { art: passt ? 'beleg' : 'differenz', beleg_gruppe: g.gruppe, ausgang_id: null, notiz: passt ? b.notiz : 'Konto ' + L.fmt(summe) + ' €, Beleg ' + L.fmt(g.brutto) + ' €' + (L.barAnteil(g) ? ' (davon ' + L.fmt(L.barAnteil(g)) + ' € bar)' : '') });
+      }).then(function () {
         if (passt) return Promise.all(andere.filter(function (x) { return x.art === 'differenz'; }).map(function (x) { return APP.upd('bank', { id: x.id }, { art: 'beleg', notiz: null }); }));
       }).then(function () {
         if (g.zahlung === 'bar') return APP.upd('belege', { gruppe: g.gruppe }, { zahlung: 'bank' });

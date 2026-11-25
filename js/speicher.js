@@ -46,6 +46,7 @@
       return Array.prototype.map.call(new Uint8Array(h), function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
     }).catch(function () { return null; });
   }
+  APP.sha256 = sha256;
   function endung(blob, name) {
     var t = blob.type || '';
     if (/pdf/.test(t)) return 'pdf'; if (/jpe?g/.test(t)) return 'jpg'; if (/png/.test(t)) return 'png'; if (/webp/.test(t)) return 'webp'; if (/heic|heif/.test(t)) return 'heic';
@@ -61,11 +62,13 @@
       hash = h;
       var doppelt = h && D.belege.find(function (x) { return x.lesung && x.lesung.hash === h && !x.storniert; });
       if (doppelt) { var e = new Error('Diesen Beleg gibt es schon (' + (doppelt.lieferant || 'ohne Namen') + ', ' + L.MONATE[doppelt.monat] + ' ' + doppelt.jahr + ').'); e.doppelt = doppelt; throw e; }
+      var seite = h && D.belege.find(function (x) { return !x.storniert && x.lesung && (x.lesung.seiten_hash || []).indexOf(h) >= 0; });
+      if (seite) { var e3 = new Error('Diese Datei hängt schon als Seite am Beleg ' + (seite.lieferant || 'ohne Namen') + ' (' + L.MONATE[seite.monat] + ' ' + seite.jahr + ').'); e3.doppelt = seite; throw e3; }
       /* schon als Post abgelegt oder als falsch entfernt */
       var weg = h && APP.ausgeblendet[h];
       if (weg) {
         var u = weg.post && (D.einst.unterlagen || []).find(function (x) { return x.pfad === weg.datei; });
-        var e2 = new Error(weg.post ? 'Schon bei den Unterlagen abgelegt' + (u ? ': ' + (u.stelle || '') + ' – ' + (u.titel || u.name) : '') + '.' : weg.grund === 'nicht an S1 Secure' ? 'Diese Rechnung wurde schon entfernt, weil sie nicht an S1 Secure geht.' : 'Diesen Beleg gibt es schon.');
+        var e2 = new Error(weg.post ? 'Schon bei den Unterlagen abgelegt' + (u ? ': ' + (u.stelle || '') + ' – ' + (u.titel || u.name) : '') + '.' : weg.grund === 'nicht an S1 Secure' ? 'Diese Rechnung wurde schon entfernt, weil sie nicht an S1 Secure geht.' : weg.grund === 'seite' ? 'Diese Datei hängt schon als Seite an einem Beleg.' : 'Diesen Beleg gibt es schon.');
         e2.doppelt = true; throw e2;
       }
       /* ohne Netz oder wenn die Verbindung beim Hochladen abreißt: auf dem Gerät aufheben, später automatisch nachholen */
@@ -251,11 +254,14 @@
         });
       });
       L.gruppen(D.belege, function (b) { return !!b.datei; }).forEach(function (g) {
-        var ziel = 'Belege/' + g.jahr + '/' + L.p2(g.monat) + '/' + (g.storniert ? 'storniert_' : '') + L.dateiname(g);
-        if (log[g.datei] === ziel) return;
-        jobs.push(function () {
-          return APP.herunterladen('belege', g.datei).then(function (blob) { return schreiben(o.handle, ziel, blob); })
-            .then(function () { if (log[g.datei]) return entfernen(o.handle, log[g.datei]); }).then(function () { log[g.datei] = ziel; neu++; });
+        if (APP.istPost && g.rows.every(APP.istPost)) return;
+        L.dateien(g).forEach(function (pfad, i) {
+          var ziel = 'Belege/' + g.jahr + '/' + L.p2(g.monat) + '/' + (g.storniert ? 'storniert_' : '') + L.dateiname(g, i + 1, pfad);
+          if (log[pfad] === ziel) return;
+          jobs.push(function () {
+            return APP.herunterladen('belege', pfad).then(function (blob) { return schreiben(o.handle, ziel, blob); })
+              .then(function () { if (log[pfad]) return entfernen(o.handle, log[pfad]); }).then(function () { log[pfad] = ziel; neu++; });
+          });
         });
       });
       D.ausgang.forEach(function (a) {

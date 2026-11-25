@@ -267,3 +267,10 @@ button.chip.warn { background: var(--warnBg); color: var(--warn); }
 .note.pruef li.warn span { color: var(--warn); }
 .note.pruef li.bad { color: var(--bad); font-weight: 600; }
 .note.pruef li.info { color: var(--mut); }
+/* Teil bar bezahlt, weitere Seiten */
+label.f.bar-anteil { flex-direction: row; align-items: center; gap: 8px; }
+label.f.bar-anteil[hidden] { display: none; }
+label.f.bar-anteil .in { width: 110px; }
+.seg.seiten { margin-bottom: 8px; flex-wrap: wrap; }
+td small { font-size: 10px; margin-left: 1px; vertical-align: top; }
+.btn[hidden], .chips [hidden] { display: none !important; }

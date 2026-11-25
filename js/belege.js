@@ -73,8 +73,8 @@
         '<td class="r num">' + L.fmt(g.brutto) + '</td>' +
         '<td class="r num hm">' + L.fmt(g.netto) + '</td>' +
         '<td class="r num">' + steuerChip(g) + '</td>' +
-        '<td class="hm">' + (g.zahlung === 'bar' ? 'Bar' : bk ? '<span title="Bank ' + L.datum(bk.datum) + '">Bank ✓</span>' : '<span class="mut">Bank</span>') + '</td>' +
-        '<td>' + statusChip(g) + (g.datei ? ' <span title="Datei vorhanden">' + APP.icon('datei', 14) + '</span>' : '') + '</td></tr>';
+        '<td class="hm">' + (g.zahlung === 'bar' ? 'Bar' : (bk ? '<span title="Bank ' + L.datum(bk.datum) + '">Bank ✓</span>' : '<span class="mut">Bank</span>') + (L.barAnteil(g) ? ' <span title="' + L.eur(L.barAnteil(g)) + ' bar angezahlt">+ bar</span>' : '')) + '</td>' +
+        '<td>' + statusChip(g) + (g.datei ? ' <span title="' + (g.seiten.length ? (g.seiten.length + 1) + ' Seiten' : 'Datei vorhanden') + '">' + APP.icon('datei', 14) + (g.seiten.length ? '<small>' + (g.seiten.length + 1) + '</small>' : '') + '</span>' : '') + '</td></tr>';
     }).join('');
     return '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Nr.</th><th class="hm">Datum</th><th>Lieferant · Bezeichnung</th><th class="hm">Konto</th><th class="r">Brutto</th><th class="r hm">Netto</th><th class="r">Steuer</th><th class="hm">Zahlung</th><th></th></tr></thead><tbody>' + rows +
       '<tr class="sum"><td></td><td class="hm"></td><td>Summe ohne Privat</td><td class="hm"></td><td class="r num">' + L.fmt(sb) + '</td><td class="r num hm">' + L.fmt(sn) + '</td><td class="r num">' + L.fmt(su) + '</td><td class="hm"></td><td></td></tr></tbody></table></div>';
@@ -389,9 +389,35 @@
   }
   function dateiVorschau(g) {
     if (!g.datei) return '<div class="note">Keine Datei. ' + (g.zahlung === 'bank' ? 'Der Kontoauszug gilt als Beleg, oder du lädst die Rechnung nach.' : '') + '<div style="margin-top:8px"><button type="button" class="btn small" data-act="datei-ersetzen" data-g="' + g.gruppe + '">Datei hinzufügen</button></div></div>';
-    return '<div id="vorschau" class="vorschau-datei" style="display:flex;align-items:center;justify-content:center"><span class="spin"></span></div>' +
-      '<div class="chips"><button type="button" class="btn small" data-act="datei-oeffnen" data-p="' + h(g.datei) + '">In neuem Fenster öffnen</button><button type="button" class="btn small ghost" data-act="datei-ersetzen" data-g="' + g.gruppe + '">Datei ersetzen</button>' + (!g.nr ? '<button type="button" class="btn small ghost" data-act="als-post" data-g="' + g.gruppe + '">Kein Beleg (Post vom Amt)</button>' : '') + '</div>';
+    var ds = L.dateien(g);
+    var tabs = ds.length > 1 ? '<div class="seg seiten" role="group" aria-label="Seiten" id="seiten-tabs">' + ds.map(function (p, i) { return '<button type="button" data-act="seite-zeigen" data-p="' + h(p) + '" data-i="' + i + '" aria-pressed="' + (i === 0) + '">Seite ' + (i + 1) + '</button>'; }).join('') + '</div>' : '';
+    return tabs + '<div id="vorschau-box">' + platzhalter() + '</div>' +
+      '<div class="chips"><button type="button" class="btn small" id="vorschau-oeffnen" data-act="datei-oeffnen" data-p="' + h(g.datei) + '">In neuem Fenster öffnen</button>' +
+      (!g.storniert ? '<button type="button" class="btn small" data-act="seite-neu" data-g="' + g.gruppe + '">+ Seite hinzufügen</button>' : '') +
+      (ds.length > 1 ? '<button type="button" class="btn small ghost" id="seite-weg" data-act="seite-weg" data-g="' + g.gruppe + '" data-p="' + h(g.datei) + '" hidden>Diese Seite entfernen</button>' : '') +
+      '<button type="button" class="btn small ghost" id="seite-ersetzen" data-act="datei-ersetzen" data-g="' + g.gruppe + '">' + (ds.length > 1 ? 'Seite 1 ersetzen' : 'Datei ersetzen') + '</button>' +
+      (!g.nr && !g.storniert ? '<button type="button" class="btn small ghost" data-act="als-seite" data-g="' + g.gruppe + '">Gehört zu einem anderen Beleg</button>' : '') +
+      (!g.nr ? '<button type="button" class="btn small ghost" data-act="als-post" data-g="' + g.gruppe + '">Kein Beleg (Post vom Amt)</button>' : '') + '</div>';
   }
+  function platzhalter() { return '<div class="vorschau-datei" style="display:flex;align-items:center;justify-content:center"><span class="spin"></span></div>'; }
+  /* eine Seite in der Vorschau zeigen */
+  function vorschauLaden(p) {
+    var box = document.getElementById('vorschau-box'); if (!box || !p) return;
+    box.dataset.p = p; box.innerHTML = platzhalter();
+    APP.dateiUrl('belege', p).then(function (u) {
+      var b = document.getElementById('vorschau-box'); if (!b || b.dataset.p !== p) return;
+      var img = /\.(jpe?g|png|webp|heic)$/i.test(p);
+      b.innerHTML = img ? '<img class="vorschau-datei" src="' + h(u) + '" alt="Beleg">' : '<iframe class="vorschau-datei" src="' + h(u) + '#view=FitH" title="Beleg"></iframe>';
+    }, function () { var b = document.getElementById('vorschau-box'); if (b) b.innerHTML = '<div class="vorschau-datei" style="display:flex;align-items:center;justify-content:center"><span class="mut">Vorschau nicht verfügbar</span></div>'; });
+  }
+  APP.A['seite-zeigen'] = function (el) {
+    var p = el.dataset.p, i = +el.dataset.i;
+    APP.$$('#seiten-tabs button').forEach(function (x) { x.setAttribute('aria-pressed', String(x === el)); });
+    var o = document.getElementById('vorschau-oeffnen'); if (o) o.dataset.p = p;
+    var w = document.getElementById('seite-weg'); if (w) { w.dataset.p = p; w.hidden = i === 0; }
+    var r = document.getElementById('seite-ersetzen'); if (r) r.hidden = i > 0;
+    vorschauLaden(p);
+  };
   function lesungHinweis(g) {
     var l = g.rows[0].lesung;
     var auto = g.rows.map(function (b) { return b.lesung && b.lesung.auto; }).filter(Boolean)[0];
@@ -415,9 +441,15 @@
     var doppel = '';
     if (k.doppelt && g.bestaetigt === false && !g.storniert) {
       doppel = '<div class="note warn"><b>Diesen Beleg gibt es vermutlich schon:</b> ' + h(k.doppelt) + '. Er zählt deshalb vorerst nirgends mit.' +
-        (dg ? '<div class="chips" style="margin-top:8px"><button type="button" class="btn small pri" data-act="doppelt-anhaengen" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Datei an ' + (L.belegNr(dg) ? 'Beleg ' + L.belegNr(dg) : 'den bestehenden Beleg') + ' hängen</button><button type="button" class="btn small" data-act="doppelt-zeigen" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Bestehenden Beleg ansehen</button><button type="button" class="btn small ghost" data-act="doppelt-nein" data-g="' + g.gruppe + '">Ist kein Doppel</button></div>' : '') + '</div>';
+        (dg ? '<div class="s" style="margin-top:6px">Ist es eine weitere Seite davon (z. B. Auftrag, Lieferschein, Anzahlung), häng es als Seite an.</div><div class="chips" style="margin-top:8px"><button type="button" class="btn small pri" data-act="doppelt-seite" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Als Seite ' + (L.dateien(dg).length + 1) + ' an ' + (L.belegNr(dg) ? 'Beleg ' + L.belegNr(dg) : 'den bestehenden Beleg') + ' anhängen</button><button type="button" class="btn small" data-act="doppelt-anhaengen" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Datei dort ersetzen</button><button type="button" class="btn small" data-act="doppelt-zeigen" data-g="' + g.gruppe + '" data-ziel="' + dg.gruppe + '">Bestehenden Beleg ansehen</button><button type="button" class="btn small ghost" data-act="doppelt-nein" data-g="' + g.gruppe + '">Ist kein Doppel</button></div>' : '') + '</div>';
     }
-    return zurueckNote(g) + pruefNote(g) + autoNote + fremdNote + (t.length ? '<div class="note blue"><b>Von der App gelesen.</b> ' + t.join(' ') + '</div>' : '') + bisher + doppel;
+    var anz = k.anzahlung && L.n(k.anzahlung.betrag) > 0 && !g.storniert ? k.anzahlung : null, anzNote = '';
+    if (anz && !L.barAnteil(g)) {
+      var ab = L.r2(L.n(anz.betrag)), wie = anz.art === 'bar' ? ' (bar)' : anz.art === 'karte' ? ' (mit Karte)' : anz.art === 'ueberweisung' ? ' (überwiesen)' : '';
+      anzNote = '<div class="note yel"><b>Auf dem Beleg steht eine Anzahlung von ' + L.eur(ab) + wie + '.</b> War sie bar, erwartet die App vom Konto nur ' + L.eur(L.r2(g.brutto - ab)) + '.' +
+        (ab < g.brutto ? '<div class="chips" style="margin-top:8px"><button type="button" class="btn small pri" data-act="anzahlung-bar" data-g="' + g.gruppe + '" data-b="' + ab + '">Ja, ' + L.eur(ab) + ' bar angezahlt</button></div>' : '') + '</div>';
+    }
+    return zurueckNote(g) + pruefNote(g) + autoNote + fremdNote + anzNote + (t.length ? '<div class="note blue"><b>Von der App gelesen.</b> ' + t.join(' ') + '</div>' : '') + bisher + doppel;
   }
   function fragenBlock(tabelle, ids) {
     var fr = D.fragen.filter(function (f) { return f.tabelle === tabelle && ids.indexOf(f.datensatz) >= 0; });
@@ -446,9 +478,10 @@
     var body = (opt.nachScan ? '<div class="note blue">Bitte kurz prüfen und speichern. ' + (f.lesung && f.lesung.ki ? '' : 'Was die App nicht lesen konnte, bitte ergänzen.') + '</div>' : '') +
       (g.storniert ? '<div class="note bad">Dieser Beleg ist storniert und zählt nirgends mit.</div>' : '') +
       (!neu && S.zuschnitt && S.zuschnitt[g.gruppe] ? '<div class="note" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="grow">Foto automatisch zugeschnitten und gerade gerichtet.</span><button type="button" class="btn small" data-act="zuschnitt-original" data-g="' + h(g.gruppe) + '">Ganzes Foto verwenden</button></div>' : '') +
-      (!neu ? lesungHinweis(g) : '') +
+      (!neu ? neueSeiteNote(g) + lesungHinweis(g) : '') +
       (!g.storniert ? bewirtungBlock(g, rows) : '') +
       '<div class="cols"><div class="narrow" style="flex-basis:340px">' + (neu ? '<div class="note">Für Belege ohne Datei, z. B. wenn der Kontoauszug als Beleg reicht. Foto oder PDF kannst du danach hinzufügen.</div>' : dateiVorschau(g)) +
+      (!neu && L.barAnteil(g) ? '<div class="note blue" style="margin-top:8px"><b>' + L.eur(L.barAnteil(g)) + ' bar angezahlt</b>, ' + L.eur(L.bankSoll(g)) + ' über das Konto.</div>' : '') +
       (bk ? '<div class="note ok" style="margin-top:8px">Mit dem Konto verbunden: ' + L.datum(bk.datum) + ' · ' + h(bk.name) + ' · ' + L.eur(bk.betrag) + '</div>' : (!neu && g.zahlung === 'bank' ? (L.wartend(D)[g.gruppe] ? '<div class="note yel" style="margin-top:8px"><b>Noch nicht bezahlt</b> (Kontoauszug bis ' + L.datum(L.bankBis(D)) + '). Die Rechnung zählt erst im Monat der Zahlung, für Vorsteuer und Ausgabe. Beim Monatsabschluss kommt sie in den nächsten Monat, die Zahlung ordnet die App dann selbst zu.</div>' : '<div class="note" style="margin-top:8px">Noch keiner Bankbuchung zugeordnet. Zahlst du später, kommt die Rechnung automatisch in den Monat der Zahlung.</div>') : '')) +
       '</div><div class="wide" style="display:flex;flex-direction:column;gap:12px" id="beleg-form">' +
       '<div class="grid">' +
@@ -460,6 +493,7 @@
       '</div>' +
       '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><div class="seg" role="group" aria-label="Zahlung" data-seg="zahlung">' +
       ['bank', 'bar'].map(function (z) { return '<button type="button" data-v="' + z + '" aria-pressed="' + (g.zahlung === z) + '">' + (z === 'bank' ? 'Bank / Karte' : 'Bar') + '</button>'; }).join('') + '</div>' +
+      '<label class="f bar-anteil" id="bar-anteil-f"' + (g.zahlung === 'bar' ? ' hidden' : '') + ' title="Wenn ein Teil bar bezahlt wurde, z. B. eine Anzahlung: vom Konto erwartet die App dann nur den Rest">davon bar<input class="in" name="bar_anteil" inputmode="decimal" placeholder="0,00" value="' + (g.bar_anteil ? h(L.fmt(g.bar_anteil)) : '') + '"></label>' +
       '<div class="seg status" role="group" aria-label="Geschäftlich oder privat" data-seg="status">' +
       [['geschaeftlich', 'Geschäftlich'], ['privat', 'Privat'], ['unklar', 'Unklar']].map(function (z) { return '<button type="button" data-v="' + z[0] + '" aria-pressed="' + (g.status === z[0]) + '">' + z[1] + '</button>'; }).join('') + '</div></div>' +
       '<div id="zeilen" style="display:flex;flex-direction:column;gap:8px">' + rows.map(function (b, i) { return zeileHtml(b, i, mehr); }).join('') + '</div>' +
@@ -476,17 +510,14 @@
       '<button type="button" class="btn" data-act="schliessen">Abbrechen</button><button type="button" class="btn pri" data-act="beleg-speichern" data-g="' + (g.gruppe || '') + '">' + (!neu && !g.bestaetigt ? 'Bestätigen und speichern' : 'Speichern') + '</button>';
     var d = APP.modal({ title: titel, body: body, foot: foot, wide: true });
     d._beleg = { g: neu ? null : g, neu: neu, bank: opt.bank || null, zahlung: g.zahlung, status: g.status };
-    if (g.datei) APP.dateiUrl('belege', g.datei).then(function (u) {
-      var v = document.getElementById('vorschau'); if (!v) return;
-      var img = /\.(jpe?g|png|webp|heic)$/i.test(g.datei);
-      v.outerHTML = img ? '<img class="vorschau-datei" src="' + h(u) + '" alt="Beleg">' : '<iframe class="vorschau-datei" src="' + h(u) + '#view=FitH" title="Beleg"></iframe>';
-    }, function () { var v = document.getElementById('vorschau'); if (v) v.innerHTML = '<span class="mut">Vorschau nicht verfügbar</span>'; });
+    if (g.datei) vorschauLaden(g.datei);
   };
   document.addEventListener('click', function (e) {
     var b = e.target.closest('#dlg [data-seg] button'); if (!b) return;
     var seg = b.parentNode, d = document.getElementById('dlg');
     APP.$$('button', seg).forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
     if (d._beleg) d._beleg[seg.dataset.seg] = b.dataset.v;
+    if (seg.dataset.seg === 'zahlung') { var ba = document.getElementById('bar-anteil-f'); if (ba) ba.hidden = b.dataset.v === 'bar'; }
   });
   document.addEventListener('input', function (e) {
     var z = e.target.closest('#zeilen [data-zeile]'); if (!z) return;
@@ -542,8 +573,12 @@
       if (z.steuerart !== 'vst') z.ust = 0, z.netto = z.brutto;
     });
     if (!v.lieferant.trim() && st.status !== 'privat') fehler = fehler || 'Bitte den Lieferanten eintragen.';
+    var summeZ = L.r2(zeilen.reduce(function (n, z) { return n + (isFinite(z.brutto) ? z.brutto : 0); }, 0));
+    var bar = st.zahlung === 'bank' && String(v.bar_anteil || '').trim() ? L.parse(v.bar_anteil) : 0;
+    if (!fehler && (!isFinite(bar) || bar < 0)) fehler = 'Bitte bei „davon bar“ einen Betrag eintragen, z. B. 100,00.';
+    else if (!fehler && bar && bar >= summeZ) fehler = 'Der Baranteil muss kleiner sein als der Beleg (' + L.eur(summeZ) + '). Ist alles bar bezahlt, bitte „Bar“ wählen.';
     if (fehler) { APP.toast(fehler, { bad: true }); return; }
-    var gemeinsam = { datum: datum, lieferant: v.lieferant.trim(), zahlung: st.zahlung, status: st.status, jahr: jahr, monat: monat, rechnungsnr: v.rechnungsnr || null, notiz: v.notiz || null, anlage: !!v.anlage, garantie_bis: v.garantie_bis || null, bestaetigt: true };
+    var gemeinsam = { datum: datum, lieferant: v.lieferant.trim(), zahlung: st.zahlung, status: st.status, jahr: jahr, monat: monat, rechnungsnr: v.rechnungsnr || null, notiz: v.notiz || null, anlage: !!v.anlage, garantie_bis: v.garantie_bis || null, bestaetigt: true, bar_anteil: bar > 0 ? L.r2(bar) : null };
     if (!v.anlage && st.status !== 'privat' && zeilen.some(function (z) { return z.netto > 1000 && Number(z.konto) >= 4000; })) APP.toast('Hinweis: über 1.000 € netto – wenn es ein Gerät ist, als Anlagegut markieren.');
     var bwBox = document.getElementById('bewirtung'), bwAn = bwBox && !bwBox.hidden;
     var bwWert = function (n) { var x = bwBox && bwBox.querySelector('[name="' + n + '"]'); return x ? x.value.trim() : ''; };
@@ -566,7 +601,7 @@
         var alteZeile = z.id && st.g ? st.g.rows.find(function (b) { return b.id === z.id; }) : null;
         if (alteZeile && alteZeile._lesung) row.lesung = alteZeile._lesung;
         if (z.id) jobs.push(APP.upd('belege', { id: z.id }, row));
-        else jobs.push(APP.ins('belege', [Object.assign(row, { gruppe: gruppe, quelle: st.g ? (st.g.quelle || 'manuell') : 'manuell', datei: st.g ? st.g.datei : null })]));
+        else jobs.push(APP.ins('belege', [Object.assign(row, { gruppe: gruppe, quelle: st.g ? (st.g.quelle || 'manuell') : 'manuell', datei: st.g ? st.g.datei : null, seiten: st.g && st.g.seiten.length ? st.g.seiten : null })]));
       });
       alt.forEach(function (b) { if (!zeilen.some(function (z) { return z.id === b.id; })) jobs.push(APP.upd('belege', { id: b.id }, { storniert: true })); });
       return Promise.all(jobs).then(function () {
@@ -611,6 +646,7 @@
   };
   APP.A['beleg-lesen'] = function (el) {
     var g = el.dataset.g, row = D.belege.find(function (b) { return b.gruppe === g && !b.storniert; }) || D.belege.find(function (b) { return b.gruppe === g; });
+    if (S.neueSeite) delete S.neueSeite[g];
     APP.lauf(el, function () {
       return APP.belegLesen(row).then(function (r) {
         if (r.abgelegt) { APP.schliessen(); APP.toast(postText(r.r)); APP.render(); return; }
@@ -729,6 +765,135 @@
         var l = JSON.parse(JSON.stringify(b.lesung || {})); if (l.ki) { l.ki.doppelt = null; l.ki.doppelt_gruppe = null; l.ki.doppelt_geprueft = APP.ich(); }
         return APP.upd('belege', { id: b.id }, { lesung: l });
       })).then(function () { APP.toast('Gut, der Beleg zählt wieder mit.'); APP.belegDialog(el.dataset.g); APP.render(); });
+    });
+  };
+
+  /* ---------- weitere Seiten: Auftrag, Lieferschein, Anzahlung, Rückseite ---------- */
+  function gruppeRows(gr) { return D.belege.filter(function (b) { return b.gruppe === gr; }); }
+  function gruppeVon(gr) { return L.gruppen(D.belege, function (b) { return b.gruppe === gr; })[0]; }
+  function endung(blob) { var t = blob.type || ''; return /pdf/.test(t) ? 'pdf' : /png/.test(t) ? 'png' : /webp/.test(t) ? 'webp' : 'jpg'; }
+  function neueSeiteNote(g) {
+    var n = S.neueSeite && S.neueSeite[g.gruppe];
+    if (!n || g.storniert) return '';
+    return '<div class="note blue"><b>' + h(n) + '</b> Stehen darauf Beträge oder eine Anzahlung, lass die App alle Seiten zusammen neu lesen.' +
+      '<div class="chips" style="margin-top:8px"><button type="button" class="btn small pri" data-act="beleg-lesen" data-g="' + g.gruppe + '">Alle Seiten neu lesen</button></div></div>';
+  }
+  APP.A['seite-neu'] = function (el) { var i = document.getElementById('f-seite'); i.value = ''; i.dataset.g = el.dataset.g; i.click(); };
+  document.addEventListener('change', function (e) {
+    if (e.target.id !== 'f-seite' || !e.target.files.length) return;
+    var gr = e.target.dataset.g, files = Array.prototype.slice.call(e.target.files), g = gruppeVon(gr);
+    if (!g) return;
+    var pfade = [], hashes = [];
+    APP.toast(files.length > 1 ? files.length + ' Seiten werden hochgeladen …' : 'Seite wird hochgeladen …', { ms: 3000 });
+    files.reduce(function (p, f) {
+      return p.then(function () {
+        /* Fotos wie beim Scannen zuschneiden; klappt das nicht, das ganze Foto */
+        return /^image\//.test(f.type || '') && APP.zuschneiden && APP.zuschnittAn() ? APP.zuschneiden(f).then(function (z) { return z.datei; }, function () { return f; }) : f;
+      }).then(APP.bildVerkleinern).then(function (blob) {
+        var path = g.jahr + '/' + L.p2(g.monat) + '/' + APP.uuid() + '.' + endung(blob);
+        return (APP.sha256 ? APP.sha256(blob) : Promise.resolve(null)).then(function (hx) {
+          if (hx && D.belege.some(function (b) { return !b.storniert && b.lesung && (b.lesung.hash === hx || (b.lesung.seiten_hash || []).indexOf(hx) >= 0); })) throw new Error('Diese Datei ist schon in der App (als Beleg oder Seite).');
+          if (hx) hashes.push(hx);
+          return APP.hochladen('belege', path, blob);
+        }).then(function () { pfade.push(path); });
+      });
+    }, Promise.resolve()).then(function () {
+      var seiten = g.datei ? g.seiten.concat(pfade) : pfade.slice(1);
+      return Promise.all(gruppeRows(gr).map(function (b) {
+        var l = Object.assign({}, b.lesung || {}); l.seiten_hash = (l.seiten_hash || []).concat(hashes);
+        var patch = { seiten: seiten.length ? seiten : null, lesung: l };
+        if (!g.datei) patch.datei = pfade[0];
+        return APP.upd('belege', { id: b.id }, patch);
+      }));
+    }).then(function () {
+      var n = L.dateien(gruppeVon(gr)).length;
+      S.neueSeite = S.neueSeite || {}; S.neueSeite[gr] = (pfade.length > 1 ? pfade.length + ' Seiten angehängt' : 'Seite ' + n + ' angehängt') + ', der Beleg hat jetzt ' + n + (n === 1 ? ' Seite.' : ' Seiten.');
+      APP.ok(pfade.length > 1 ? pfade.length + ' Seiten angehängt.' : 'Seite ' + n + ' angehängt.');
+      APP.belegDialog(gr); APP.render();
+    }).catch(function (e) {
+      if (pfade.length) APP.toast('Nur ' + pfade.length + ' von ' + files.length + ' Seiten hochgeladen, nichts angehängt.', { warn: true });
+      APP.fehler(e, 'Seite');
+    });
+  });
+  APP.A['seite-weg'] = function (el) {
+    var gr = el.dataset.g, p = el.dataset.p, g = gruppeVon(gr);
+    if (!g || !p || p === g.datei) return;
+    APP.bestaetigen('Diese Seite vom Beleg entfernen? Die Datei bleibt im Archiv.', 'Entfernen').then(function (ok) {
+      if (!ok) { APP.belegDialog(gr); return; }
+      var rest = g.seiten.filter(function (x) { return x !== p; });
+      return Promise.all(gruppeRows(gr).map(function (b) { return APP.upd('belege', { id: b.id }, { seiten: rest.length ? rest : null }); }))
+        .then(function () { APP.ok('Seite entfernt.'); APP.belegDialog(gr); APP.render(); });
+    }).catch(APP.fehler);
+  };
+  /* einen eigenen Eintrag als weitere Seite an einen anderen Beleg hängen; der Eintrag wird storniert und ausgeblendet */
+  function alsSeiteAnhaengen(srcG, zielG) {
+    var src = gruppeVon(srcG), zg = gruppeVon(zielG);
+    if (!src || !zg || srcG === zielG) return Promise.reject(new Error('Beleg nicht gefunden.'));
+    var vorhanden = L.dateien(zg), neu = L.dateien(src).filter(function (p) { return vorhanden.indexOf(p) < 0; });
+    if (!neu.length) return Promise.reject(new Error('Der Eintrag hat keine Datei.'));
+    var name = L.belegNr(zg) ? 'Beleg ' + L.belegNr(zg) : 'den Beleg ' + (zg.lieferant || '');
+    var nr = vorhanden.length + 1, am = new Date().toISOString();
+    var l0 = src.rows[0].lesung || {}, srcHash = [l0.hash].concat(l0.seiten_hash || []).filter(Boolean), srcKi = l0.ki || {};
+    var datei = zg.datei || neu[0], seiten = zg.datei ? zg.seiten.concat(neu) : neu.slice(1);
+    return Promise.all(gruppeRows(zielG).map(function (b) {
+      var l = Object.assign({}, b.lesung || {});
+      l.seiten_hash = (l.seiten_hash || []).concat(srcHash);
+      if (srcKi.anzahlung && l.ki && !l.ki.anzahlung) l.ki = Object.assign({}, l.ki, { anzahlung: srcKi.anzahlung });
+      var patch = { seiten: seiten.length ? seiten : null, lesung: l };
+      if (!zg.datei) patch.datei = datei;
+      return APP.upd('belege', { id: b.id }, patch);
+    })).then(function () {
+      /* war der Eintrag schon einer Abbuchung zugeordnet: die gehört jetzt zum Beleg */
+      return Promise.all(D.bank.filter(function (x) { return x.beleg_gruppe === srcG; }).map(function (x) { return APP.upd('bank', { id: x.id }, { beleg_gruppe: zielG }); }));
+    }).then(function () {
+      return Promise.all(gruppeRows(srcG).filter(function (b) { return !b.storniert; }).map(function (b) {
+        return APP.upd('belege', { id: b.id }, { storniert: true, notiz: 'Als Seite ' + nr + ' an ' + name + ' angehängt', lesung: Object.assign({}, b.lesung || {}, { weg: { grund: 'seite', ziel: zielG, am: am, von: APP.ich() } }) });
+      }));
+    }).then(function () {
+      var ids = src.rows.map(function (b) { return b.id; });
+      return Promise.all(D.fragen.filter(function (f) { return !f.erledigt && ids.indexOf(f.datensatz) >= 0; }).map(function (f) {
+        return APP.upd('fragen', { id: f.id }, { erledigt: true, antwort: 'Als Seite an ' + name + ' angehängt', antwort_von: APP.ich(), antwort_am: am });
+      }));
+    }).then(function () {
+      src.rows.forEach(function (b) { APP.merkeAusgeblendet(Object.assign({}, b, { lesung: Object.assign({}, b.lesung || {}, { weg: { grund: 'seite' } }) })); });
+      D.belege = D.belege.filter(function (b) { return b.gruppe !== srcG; });
+      S.neueSeite = S.neueSeite || {}; S.neueSeite[zielG] = 'Seite ' + nr + (neu.length > 1 ? '–' + (nr + neu.length - 1) : '') + ' angehängt (' + (src.lieferant || 'ohne Namen') + (src.datum ? ' vom ' + L.datum(src.datum) : '') + ').';
+      return { name: name, nr: nr };
+    });
+  }
+  APP.alsSeiteAnhaengen = alsSeiteAnhaengen;
+  function anhaengenUndZeigen(el) {
+    var ziel = el.dataset.ziel;
+    return APP.lauf(el, function () {
+      return alsSeiteAnhaengen(el.dataset.g, ziel).then(function (r) { APP.ok('Als Seite ' + r.nr + ' an ' + r.name + ' angehängt.'); APP.belegDialog(ziel); APP.render(); });
+    });
+  }
+  APP.A['doppelt-seite'] = anhaengenUndZeigen;
+  APP.A['als-seite-ziel'] = anhaengenUndZeigen;
+  APP.A['als-seite'] = function (el) {
+    var gr = el.dataset.g, g = gruppeVon(gr);
+    if (!g) return;
+    var kand = L.gruppen(D.belege, function (b) { return b.gruppe !== gr && !b.storniert; }).filter(function (x) {
+      return !x.storniert && Math.abs((x.jahr * 12 + x.monat) - (g.jahr * 12 + g.monat)) <= 2;
+    }).map(function (x) {
+      var s0 = (g.lieferant && L.aehnlich(x.lieferant || '', g.lieferant) ? 100 : 0) + (Math.abs(x.brutto - g.brutto) < 0.02 ? 20 : 0) - (x.datum && g.datum ? Math.min(60, Math.abs(L.tageBis(x.datum, g.datum))) : 30);
+      return { g: x, s: s0 };
+    }).sort(function (a, b) { return b.s - a.s; }).slice(0, 12);
+    APP.modal({
+      title: 'Zu welchem Beleg gehört das?',
+      body: '<p style="margin:0">Die Datei kommt als weitere Seite zum gewählten Beleg. Dieser Eintrag (' + h(g.lieferant || 'ohne Namen') + ', ' + L.eur(g.brutto) + ') wird danach storniert und zählt nicht doppelt.</p>' +
+        (kand.length ? '<div class="list card flat" style="padding:0">' + kand.map(function (k) {
+          return '<button type="button" class="item" data-act="als-seite-ziel" data-g="' + gr + '" data-ziel="' + k.g.gruppe + '"><div class="grow"><span class="t">' + h(k.g.lieferant || '(ohne Namen)') + '</span><span class="s">' + (L.belegNr(k.g) || 'neu') + ' · ' + L.datum(k.g.datum) + ' · ' + h(k.g.text || '') + (k.g.seiten.length ? ' · ' + (k.g.seiten.length + 1) + ' Seiten' : '') + '</span></div><span class="amt">' + L.eur(k.g.brutto) + '</span></button>';
+        }).join('') + '</div>' : '<div class="s">Kein Beleg in den Monaten daneben.</div>'),
+      foot: '<button type="button" class="btn" data-act="beleg" data-g="' + gr + '">Zurück</button>'
+    });
+  };
+  APP.A['anzahlung-bar'] = function (el) {
+    var gr = el.dataset.g, b = L.r2(+el.dataset.b);
+    if (!(b > 0)) return;
+    APP.lauf(el, function () {
+      return Promise.all(gruppeRows(gr).map(function (x) { return APP.upd('belege', { id: x.id }, { zahlung: 'bank', bar_anteil: b }); }))
+        .then(function () { APP.ok(L.eur(b) + ' bar eingetragen. Vom Konto erwartet die App jetzt nur den Rest.'); APP.belegDialog(gr); APP.render(); });
     });
   };
 
