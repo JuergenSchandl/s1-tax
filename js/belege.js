@@ -606,12 +606,23 @@
       alt.forEach(function (b) { if (!zeilen.some(function (z) { return z.id === b.id; })) jobs.push(APP.upd('belege', { id: b.id }, { storniert: true })); });
       return Promise.all(jobs).then(function () {
         if (st.bank) return APP.upd('bank', { id: st.bank.id }, { art: 'beleg', beleg_gruppe: gruppe });
-      }).then(function () {
+      }).then(function () { return bankNachziehen(gruppe); }).then(function () {
         APP.schliessen(); APP.ok('Gespeichert.'); APP.render();
       });
     });
     });
   };
+  /* stimmt die Abbuchung jetzt (z. B. nach „davon bar“), wird aus „Differenz“ wieder ein normal zugeordneter Beleg */
+  function bankNachziehen(gruppe) {
+    var g = L.gruppen(D.belege, function (b) { return b.gruppe === gruppe; })[0];
+    var bks = D.bank.filter(function (x) { return x.beleg_gruppe === gruppe; });
+    if (!g || g.storniert || !bks.length || !bks.some(function (x) { return x.art === 'differenz'; })) return Promise.resolve();
+    var summe = L.r2(bks.reduce(function (n, x) { return n + Math.abs(L.n(x.betrag)); }, 0));
+    if (Math.abs(summe - L.bankSoll(g)) >= 0.005) return Promise.resolve();
+    return Promise.all(bks.filter(function (x) { return x.art === 'differenz'; }).map(function (x) { return APP.upd('bank', { id: x.id }, { art: 'beleg', notiz: null }); }))
+      .then(function () { APP.toast('Die Abbuchung passt jetzt zum Beleg, die Differenz ist weg.', { ok: true }); });
+  }
+  APP.bankNachziehen = bankNachziehen;
   /* Stornieren nur mit Grund; der Grund steht in der Notiz und im Protokoll */
   var STORNO_GRUENDE = ['Test', 'Doppelt erfasst', 'Falsch erfasst', 'Gehört nicht zu S1 Secure', 'Gutschrift / Rückerstattung'];
   function stornoNotiz(alt) { return String(alt || '').replace(/^Storniert: [^·]*(· )?/, '').trim(); }
@@ -893,7 +904,7 @@
     if (!(b > 0)) return;
     APP.lauf(el, function () {
       return Promise.all(gruppeRows(gr).map(function (x) { return APP.upd('belege', { id: x.id }, { zahlung: 'bank', bar_anteil: b }); }))
-        .then(function () { APP.ok(L.eur(b) + ' bar eingetragen. Vom Konto erwartet die App jetzt nur den Rest.'); APP.belegDialog(gr); APP.render(); });
+        .then(function () { return bankNachziehen(gr); }).then(function () { APP.ok(L.eur(b) + ' bar eingetragen. Vom Konto erwartet die App jetzt nur den Rest.'); APP.belegDialog(gr); APP.render(); });
     });
   };
 
