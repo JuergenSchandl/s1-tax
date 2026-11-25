@@ -475,7 +475,7 @@
     var monate = '';
     for (var i = -3; i <= 3; i++) { var x = L.monatPlus(g.jahr, g.monat, i); monate += '<option value="' + x.jahr + '-' + x.monat + '"' + (i === 0 ? ' selected' : '') + '>' + L.MONATE[x.monat] + ' ' + x.jahr + '</option>'; }
     var titel = neu ? 'Neuer Beleg' : 'Beleg ' + (L.belegNr(g) || '(noch ohne Nummer)') + (g.lieferant ? ' · ' + g.lieferant : '');
-    var body = (opt.nachScan ? '<div class="note blue">Bitte kurz prüfen und speichern. ' + (f.lesung && f.lesung.ki ? '' : 'Was die App nicht lesen konnte, bitte ergänzen.') + '</div>' : '') +
+    var body = (opt.hinweis ? '<div class="note blue">' + h(opt.hinweis) + '</div>' : '') + (opt.nachScan ? '<div class="note blue">Bitte kurz prüfen und speichern. ' + (f.lesung && f.lesung.ki ? '' : 'Was die App nicht lesen konnte, bitte ergänzen.') + '</div>' : '') +
       (g.storniert ? '<div class="note bad">Dieser Beleg ist storniert und zählt nirgends mit.</div>' : '') +
       (!neu && S.zuschnitt && S.zuschnitt[g.gruppe] ? '<div class="note" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="grow">Foto automatisch zugeschnitten und gerade gerichtet.</span><button type="button" class="btn small" data-act="zuschnitt-original" data-g="' + h(g.gruppe) + '">Ganzes Foto verwenden</button></div>' : '') +
       (!neu ? neueSeiteNote(g) + lesungHinweis(g) : '') +
@@ -577,7 +577,12 @@
     var bar = st.zahlung === 'bank' && String(v.bar_anteil || '').trim() ? L.parse(v.bar_anteil) : 0;
     if (!fehler && (!isFinite(bar) || bar < 0)) fehler = 'Bitte bei „davon bar“ einen Betrag eintragen, z. B. 100,00.';
     else if (!fehler && bar && bar >= summeZ) fehler = 'Der Baranteil muss kleiner sein als der Beleg (' + L.eur(summeZ) + '). Ist alles bar bezahlt, bitte „Bar“ wählen.';
-    if (fehler) { APP.toast(fehler, { bad: true }); return; }
+    if (fehler) {
+      APP.toast(fehler, { bad: true });
+      var leer = /Konto/.test(fehler) && APP.$$('#zeilen [name="konto"]').filter(function (x) { return !x.value; })[0];
+      if (leer) { leer.focus(); if (leer.scrollIntoView) leer.scrollIntoView({ block: 'center' }); }
+      return;
+    }
     var gemeinsam = { datum: datum, lieferant: v.lieferant.trim(), zahlung: st.zahlung, status: st.status, jahr: jahr, monat: monat, rechnungsnr: v.rechnungsnr || null, notiz: v.notiz || null, anlage: !!v.anlage, garantie_bis: v.garantie_bis || null, bestaetigt: true, bar_anteil: bar > 0 ? L.r2(bar) : null };
     if (!v.anlage && st.status !== 'privat' && zeilen.some(function (z) { return z.netto > 1000 && Number(z.konto) >= 4000; })) APP.toast('Hinweis: über 1.000 € netto – wenn es ein Gerät ist, als Anlagegut markieren.');
     var bwBox = document.getElementById('bewirtung'), bwAn = bwBox && !bwBox.hidden;

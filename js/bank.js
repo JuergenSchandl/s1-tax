@@ -246,10 +246,39 @@
     return APP.ins('belege', [{ jahr: b.jahr, monat: b.monat, datum: b.datum, gruppe: gr, lieferant: w.lieferant, text: w.text, konto: w.konto, brutto: w.brutto, netto: w.netto, ust: w.ust, steuerart: w.steuerart, steuersatz: w.steuersatz || null, zahlung: 'bank', quelle: 'manuell', status: 'geschaeftlich', bestaetigt: true }])
       .then(function () { return APP.upd('bank', { id: b.id }, { art: 'beleg', beleg_gruppe: gr }); }).then(function () { APP.schliessen(); APP.ok('Gebucht: ' + w.text); });
   });
+  /* Name aus dem Kontoauszug lesbar: „Dropbox*GCSBMQPS5CGM“ → „Dropbox“, „GASOLINERAS TECKMAR“ → „Gasolineras Teckmar“ */
+  function anbieterName(n) {
+    var s = String(n || '').replace(/\*.*$/, '').replace(/\s+/g, ' ').trim() || String(n || '').trim();
+    if (s === s.toUpperCase() && /[A-Z]/.test(s)) s = s.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, function (a, x, c) { return x + c.toUpperCase(); });
+    return s;
+  }
+  function kategorie(b) { return (String(b.info || '').split('•')[1] || '').split('·')[0].trim(); }
+  /* noch nie so gebucht: Vorschlag nach der Kategorie im Kontoauszug, nur wenn sie eindeutig ist (mindestens 5 Fälle, 60 % gleich gebucht) */
+  function nachKategorie(b) {
+    var kat = kategorie(b), n = {}, alle = 0;
+    if (!kat || b.betrag >= 0) return null;
+    D.bank.forEach(function (x) {
+      if (x.id === b.id || !x.beleg_gruppe || x.betrag >= 0 || kategorie(x) !== kat) return;
+      var r = D.belege.find(function (y) { return y.gruppe === x.beleg_gruppe && !y.storniert && y.status !== 'privat' && y.konto; });
+      if (!r) return;
+      var k = r.konto + '|' + (r.steuerart || 'vst'); n[k] = (n[k] || 0) + 1; alle++;
+    });
+    var best = Object.keys(n).sort(function (a, c) { return n[c] - n[a]; })[0];
+    if (!best || alle < 5 || n[best] / alle < 0.6) return null;
+    var p = best.split('|');
+    return { konto: +p[0], steuerart: p[1], kat: kat, n: n[best], alle: alle };
+  }
   APP.A['bank-neu-beleg'] = function (el) {
     var b = D.bank.find(function (x) { return x.id === el.dataset.id; }), w = L.steuerBuchung(b) || L.wieLetztesMal(D, b) || {};
-    APP.belegDialog(null, { bank: b, vorgabe: { jahr: b.jahr, monat: b.monat, datum: b.datum, zahlung: 'bank', lieferant: w.lieferant || b.name, text: w.text || '', konto: w.konto || '', brutto: -b.betrag, netto: w.netto !== undefined ? w.netto : -b.betrag, ust: w.ust || 0, steuerart: w.steuerart || 'keine', steuersatz: w.steuersatz || 20 } });
+    var k = !w.konto ? nachKategorie(b) : null, hinweis = null;
+    if (k) {
+      /* ohne Rechnung keine Vorsteuer: aus „Vorsteuer“ wird „ohne Vorsteuer“ */
+      w = { konto: k.konto, steuerart: k.steuerart === 'vst' ? 'keine' : k.steuerart, steuersatz: 20 };
+      hinweis = 'Konto und Steuer sind ein Vorschlag: Zahlungen der Kategorie „' + k.kat + '“ wurden ' + k.n + ' von ' + k.alle + ' Mal so gebucht. Bitte prüfen.' + (k.steuerart === 'vst' ? ' Ohne Rechnung keine Vorsteuer.' : '');
+    }
+    APP.belegDialog(null, { bank: b, hinweis: hinweis, vorgabe: { jahr: b.jahr, monat: b.monat, datum: b.datum, zahlung: 'bank', lieferant: w.lieferant || anbieterName(b.name), text: w.text || '', konto: w.konto || '', brutto: -b.betrag, netto: w.netto !== undefined ? w.netto : -b.betrag, ust: w.ust || 0, steuerart: w.steuerart || 'keine', steuersatz: w.steuersatz || 20 } });
   };
+  APP.anbieterName = anbieterName;
   APP.A['bank-upload'] = function (el) {
     var b = D.bank.find(function (x) { return x.id === el.dataset.id; });
     var i = document.createElement('input'); i.type = 'file'; i.accept = 'application/pdf,image/*';
