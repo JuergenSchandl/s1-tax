@@ -985,6 +985,8 @@
     if (st.abgabenkonto_stand && L.tageBis(heute, st.abgabenkonto_stand) > 60) add('info', 'Steuerwerte', 'Guthaben am Abgabenkonto zuletzt am ' + L.datum(st.abgabenkonto_stand) + ' eingetragen');
     var bis = L.bankBis(D);
     if (bis && L.tageBis(heute, bis) > 40) add('info', 'Bank', 'Kontoauszüge sind erst bis ' + L.datum(bis) + ' eingelesen', 'bank');
+    /* Mitteilungen aufs Handy: der Dienst muss mit derselben Rechenlogik rechnen wie die App */
+    if (D.dienstStand && !D.dienstStand.gleich) add('warn', 'Mitteilungen', D.dienstStand.logik === 'app' ? 'Der Erinnerungsdienst rechnet noch mit einer älteren Rechenlogik als die App. Beträge in Mitteilungen können abweichen, maßgeblich ist die App.' : 'Der Erinnerungsdienst konnte die Rechenlogik der App nicht laden' + (D.dienstStand.fehler ? ' (' + D.dienstStand.fehler + ')' : '') + '. Erinnerungen mit Beträgen (UVA, ESt, SVS) sind ausgesetzt, maßgeblich ist die App.', 'steuer');
     /* Vergleich mit der Monatsliste: Unterschiede sind Widersprüche, bis sie geklärt sind */
     Object.keys(D.einst && D.einst.vergleiche || {}).forEach(function (k) {
       var e = D.einst.vergleiche[k], jm = k.split('-'), n = e.abweichend.length + e.nurApp.length + e.nurListe.length + (e.aus ? e.aus.abweichend.length + e.aus.nurApp.length + e.aus.nurListe.length : 0);

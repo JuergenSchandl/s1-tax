@@ -157,6 +157,18 @@
   };
   APP.A['vergleich-zeigen'] = function (el) { APP.vergleichZeigen(+el.dataset.j, +el.dataset.m); };
 
+  /* Rechnet der Erinnerungsdienst (Mitteilungen aufs Handy) mit derselben Logik wie diese App? */
+  APP.dienstPruefen = function () {
+    var d = (D.einst.dienst || {}).erinnerungen;
+    if (!d) return Promise.resolve();
+    var tag = Array.prototype.slice.call(document.scripts).filter(function (s) { return /js\/logic\.js/.test(s.src); })[0];
+    if (!tag || !window.crypto || !crypto.subtle) return Promise.resolve();
+    return fetch(tag.src).then(function (r) { return r.arrayBuffer(); }).then(function (b) { return crypto.subtle.digest('SHA-256', b); }).then(function (h) {
+      var hex = Array.prototype.map.call(new Uint8Array(h), function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+      D.dienstStand = { gleich: d.logik === 'app' && d.sha256 === hex, logik: d.logik, fehler: d.fehler || null, am: d.am };
+    }).catch(function () { /* egal */ });
+  };
+
   APP.A['beleg-pruefen'] = function (el) {
     var g = el.dataset.g;
     return APP.lauf(el, function () {

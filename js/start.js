@@ -42,6 +42,7 @@
   };
   function danach() {
     APP.warteschlangeSenden();
+    APP.dienstPruefen().then(function () { if (APP.D.dienstStand && !APP.D.dienstStand.gleich) APP.render(); });
     APP.nachpruefen(10).catch(function () { return 0; }).then(function () { return APP.autoBestaetigen(); }).then(function (n) { if (n) { APP.ok(n === 1 ? 'Ein eindeutiger Beleg wurde automatisch bestätigt.' : n + ' eindeutige Belege wurden automatisch bestätigt.'); APP.render(); } }).catch(function (e) { APP.fehler(e, 'Automatisch bestätigen'); });
     APP.pushPruefen();
     APP.ordnerLaden().then(function () { if (APP.ordner.handle && APP.ordner.recht === 'granted') APP.sichern(true); });
