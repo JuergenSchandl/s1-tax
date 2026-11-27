@@ -654,13 +654,59 @@
     if (bk.betrag > 0 && /schandl/i.test(bk.name) && /einlage/i.test(bk.info)) return 'einlage';
     return null;
   };
+  /* ---------- Fehlüberweisungen: Abbuchung und Rückzahlung heben sich auf, kein Beleg, keine Steuer ---------- */
+  L.FEHL_TAGE = 120;
+  /* passende Gegenbuchung: gleicher Betrag mit umgekehrtem Vorzeichen, Rückzahlung höchstens 120 Tage nach der Abbuchung, noch nicht verbunden */
+  L.fehlGegen = function (D, b, arten) {
+    arten = arten || ['offen', 'unklar', 'fehl'];
+    var amt = L.r2(L.n(b.betrag));
+    return D.bank.filter(function (x) {
+      if (x.id === b.id || x.paar_id || arten.indexOf(x.art) < 0) return false;
+      if (Math.abs(L.r2(L.n(x.betrag)) + amt) > 0.005) return false;
+      var ab = amt < 0 ? b : x, zu = amt < 0 ? x : b, t = L.tageBis(zu.datum, ab.datum);
+      return t >= 0 && t <= L.FEHL_TAGE;
+    }).sort(function (p, q) { return Math.abs(L.tageBis(p.datum, b.datum)) - Math.abs(L.tageBis(q.datum, b.datum)); });
+  };
+  L.fehlPaar = function (D, b) { return (b && b.paar_id && D.bank.find(function (x) { return x.id === b.paar_id; })) || null; };
+  L.fehlText = function (D, b) {
+    var p = L.fehlPaar(D, b);
+    if (L.n(b.betrag) < 0) return (b.notiz || 'Fehlüberweisung ' + b.name) + (p ? ', zurück am ' + L.datum(p.datum) : ', Rückzahlung offen');
+    return b.notiz || ('Rückzahlung Fehlüberweisung' + (p ? ' vom ' + L.datum(p.datum) : ''));
+  };
+  /* stornierte Rechnung an jemand anderen mit genau diesem Betrag: die Zahlung war vermutlich eine Fehlüberweisung */
+  L.fehlVerdacht = function (D, b) {
+    if (!b || L.n(b.betrag) >= 0) return null;
+    var amt = Math.abs(L.r2(L.n(b.betrag)));
+    return L.gruppen(D.belege, function (x) { return x.storniert; }).filter(function (g) {
+      var k = (g.rows[0].lesung || {}).ki || {};
+      var fremd = k.an_s1 === false || /nicht zu S1|jemand anderen|falsch hineingezogen/i.test(g.rows[0].notiz || '');
+      /* stornierte Gruppen zählen in g.brutto nicht mit: Betrag aus den Zeilen (ohne beim Neu-Lesen ersetzte) */
+      var br = L.r2(g.rows.reduce(function (n, x) { return n + (/beim Neu-Lesen ersetzt/.test(x.notiz || '') ? 0 : L.n(x.brutto)); }, 0));
+      return fremd && Math.abs(br - amt) < 0.005 && g.datum && Math.abs(L.tageBis(b.datum, g.datum)) <= 45;
+    }).map(function (g) {
+      var k = (g.rows[0].lesung || {}).ki || {};
+      return { g: g, an: k.empfaenger || null, text: 'Fehlüberweisung: Rechnung ' + (g.lieferant || '') + (g.rechnungsnr ? ' ' + g.rechnungsnr : '') + (k.empfaenger ? ' an ' + k.empfaenger : '') };
+    })[0] || null;
+  };
   /* Vorschläge für alle offenen Buchungen; nur eindeutige werden automatisch übernommen */
   L.autoAbgleich = function (D, jahr, monat) {
-    var out = [], belegt = {}, rg = {};
+    var out = [], belegt = {}, rg = {}, gepaart = {};
     D.bank.forEach(function (bk) {
       if (bk.art !== 'offen' || (jahr && bk.jahr !== jahr) || (monat && bk.monat !== monat)) return;
       var r = L.regelArt(bk);
       if (r) { out.push({ bank: bk, patch: { art: r, notiz: r === 'entnahme' ? 'Entnahme Jürgen Schandl' : r === 'einlage' ? 'Einlage Jürgen Schandl' : null } }); return; }
+      /* Rückzahlung einer als Fehlüberweisung markierten Abbuchung: beide verbinden */
+      if (L.n(bk.betrag) > 0) {
+        var fg = L.fehlGegen(D, bk, ['fehl']).filter(function (x) { return !gepaart[x.id]; })[0];
+        if (fg) {
+          gepaart[fg.id] = 1;
+          out.push({ bank: bk, patch: { art: 'fehl', paar_id: fg.id, notiz: 'Rückzahlung Fehlüberweisung vom ' + L.datum(fg.datum) + ' (' + fg.name + ')' } });
+          out.push({ bank: fg, patch: { paar_id: bk.id } });
+          return;
+        }
+      }
+      /* passt zu einer stornierten Rechnung an jemand anderen: nicht automatisch zuordnen, Jürgen entscheidet (Fehlüberweisung) */
+      if (L.n(bk.betrag) < 0 && L.fehlVerdacht(D, bk)) return;
       var c = L.kandidaten(D, bk, false).filter(function (k) { return k.art === 'beleg' ? !belegt[k.g.gruppe] : !rg[k.a.id]; });
       if (bk.betrag > 0) {
         var gut = c.filter(function (k) { return k.gleich && (k.nr || k.name); });
@@ -704,7 +750,7 @@
   L.abos = function (D) {
     var per = {};
     D.bank.forEach(function (b) {
-      if (b.betrag >= 0 || b.art === 'entnahme' || b.art === 'privat' || /finanzamt|sozialversicherung/i.test(b.name)) return;
+      if (b.betrag >= 0 || b.art === 'entnahme' || b.art === 'privat' || b.art === 'fehl' || /finanzamt|sozialversicherung/i.test(b.name)) return;
       var k = L.anbieter(b.name); if (!k) return;
       (per[k] = per[k] || { key: k, name: b.name, rows: [] }).rows.push(b);
     });
@@ -776,9 +822,9 @@
     var last = rows.length;
     rows.push([null, null, null, null, null, { f: '=SUM(F2:F' + last + ')', s: 'buchFett' }, { f: '=SUM(G2:G' + last + ')', s: 'buchFett' }, { f: '=SUM(H2:H' + last + ')', s: 'buchFett' }]);
     rows.push([]);
-    var unten = D.bank.filter(function (b) { return b.jahr === j && b.monat === m && ['ausgang', 'entnahme', 'einlage', 'privat', 'differenz', 'offen', 'cashback'].indexOf(b.art) >= 0; })
+    var unten = D.bank.filter(function (b) { return b.jahr === j && b.monat === m && ['ausgang', 'entnahme', 'einlage', 'privat', 'differenz', 'offen', 'cashback', 'fehl'].indexOf(b.art) >= 0; })
       .map(function (b) {
-        var t = b.notiz || (b.art === 'cashback' ? 'N26 Cashback' : b.art === 'offen' ? 'offen: ' + b.name : b.name);
+        var t = b.art === 'fehl' ? L.fehlText(D, b) : b.notiz || (b.art === 'cashback' ? 'N26 Cashback' : b.art === 'offen' ? 'offen: ' + b.name : b.name);
         if (b.art === 'differenz' && !b.notiz) t = 'Differenz ' + b.name;
         return { datum: b.datum, betrag: Math.abs(L.n(b.betrag)), t: t };
       });
@@ -995,6 +1041,13 @@
       if (gg.storniert) { add('warn', 'Bank', L.datum(erst.datum) + ' ' + erst.name + ': der zugeordnete Beleg ist storniert', 'bank:' + erst.jahr + '-' + erst.monat); return; }
       var soll = L.bankSoll(gg), bar = L.barAnteil(gg);
       if (Math.abs(summe - soll) > 0.05) add('warn', 'Bank', L.datum(erst.datum) + ' ' + erst.name + ': abgebucht ' + L.eur(summe) + ', Beleg ' + L.eur(gg.brutto) + (bar ? ' minus ' + L.eur(bar) + ' bar' : '') + ' (Differenz ' + L.eur(L.r2(summe - soll)) + ')', 'bank:' + erst.jahr + '-' + erst.monat);
+    });
+    /* 4b. Fehlüberweisungen: die Rückzahlung muss kommen */
+    var bisB = D.bank.reduce(function (m, b) { return b.datum > m ? b.datum : m; }, '');
+    D.bank.forEach(function (b) {
+      if (b.art !== 'fehl' || L.fehlPaar(D, b)) return;
+      if (L.n(b.betrag) < 0) { if (bisB && L.tageBis(bisB, b.datum) >= 30) add('warn', 'Bank', 'Fehlüberweisung ' + L.datum(b.datum) + ' ' + b.name + ' über ' + L.eur(-L.n(b.betrag)) + ': Rückzahlung ist bis ' + L.datum(bisB) + ' nicht auf dem Konto', 'bank:' + b.jahr + '-' + b.monat); }
+      else add('warn', 'Bank', 'Rückzahlung ' + L.datum(b.datum) + ' ' + b.name + ' über ' + L.eur(b.betrag) + ': keine zugehörige Fehlüberweisung verbunden', 'bank:' + b.jahr + '-' + b.monat);
     });
     /* 5. dieselbe Datei zweimal */
     var hs = {};

@@ -4,7 +4,7 @@
 (function () {
   'use strict';
   var APP = window.APP, L = window.L, D = APP.D, S = APP.S, h = APP.h;
-  var ART = { offen: ['offen', 'warn'], beleg: ['Beleg', 'ok'], ausgang: ['Zahlungseingang', 'ok'], einlage: ['Einlage', 'blue'], entnahme: ['Entnahme', 'blue'], cashback: ['Cashback', 'blue'], privat: ['privat', ''], unklar: ['unklar', 'warn'], differenz: ['Differenz', 'warn'] };
+  var ART = { offen: ['offen', 'warn'], beleg: ['Beleg', 'ok'], ausgang: ['Zahlungseingang', 'ok'], einlage: ['Einlage', 'blue'], entnahme: ['Entnahme', 'blue'], cashback: ['Cashback', 'blue'], privat: ['privat', ''], unklar: ['unklar', 'warn'], differenz: ['Differenz', 'warn'], fehl: ['Fehlüberweisung', 'blue'] };
 
   function verknuepfung(b) {
     if (b.beleg_gruppe) {
@@ -12,6 +12,10 @@
       if (g) return '<a href="#" data-act="beleg" data-g="' + g.gruppe + '">' + (L.belegNr(g) || 'neu') + ' · ' + h(g.lieferant) + '</a>' + (L.barAnteil(g) ? ' <span class="chip">+ ' + L.fmt(L.barAnteil(g)) + ' bar</span>' : '') + (D.bank.filter(function (x) { return x.beleg_gruppe === g.gruppe; }).length === 1 && Math.abs(L.bankSoll(g) + b.betrag) > 0.005 && !g.storniert ? ' <span class="chip warn">Beleg ' + L.fmt(g.brutto) + '</span>' : '') + (g.storniert ? ' <span class="chip bad">Beleg storniert</span>' : '');
     }
     if (b.ausgang_id) { var a = D.ausgang.find(function (x) { return x.id === b.ausgang_id; }); if (a) return 'Rechnung ' + h(a.nr) + ' · ' + h(a.kunde); }
+    if (b.art === 'fehl') {
+      var p = L.fehlPaar(D, b);
+      return h(b.notiz || (b.betrag < 0 ? 'Fehlüberweisung' : 'Rückzahlung')) + ' · ' + (p ? '<a href="#" data-act="bank-zeile" data-id="' + p.id + '">' + (b.betrag < 0 ? 'zurück am ' : 'Abbuchung vom ') + L.datum(p.datum) + '</a> <span class="chip ok">gleicht sich aus</span>' : (b.betrag < 0 ? '<span class="chip warn">Rückzahlung offen</span>' : '<span class="chip warn">Abbuchung fehlt</span>'));
+    }
     return h(b.notiz || '');
   }
   APP.V.bank = {
@@ -181,7 +185,11 @@
     var zugeordnet = b.art !== 'offen';
     var body = '<div class="item" style="padding:0"><div class="grow"><span class="t">' + h(b.name) + '</span><span class="s">' + L.datum(b.datum) + ' · ' + h(b.info) + '</span></div><span class="amt ' + (b.betrag > 0 ? 'pos' : '') + '" style="font-size:18px">' + L.eur(b.betrag, { plus: true }) + '</span></div>';
     if (zugeordnet) body += '<div class="note ok">Zugeordnet: ' + (ART[b.art] || [b.art])[0] + ' · ' + verknuepfung(b) + '</div>';
-    if (wie && !zugeordnet) {
+    /* passt genau zu einer stornierten Rechnung an jemand anderen: zuerst an eine Fehlüberweisung denken, nicht „wie zuletzt“ buchen */
+    var verdacht = !zugeordnet ? L.fehlVerdacht(D, b) : null;
+    if (verdacht) body += '<div class="card blue" id="fehl-verdacht" style="padding:12px"><b>Vermutlich eine Fehlüberweisung</b><div>Der Betrag passt genau zur stornierten Rechnung ' + h(verdacht.g.lieferant || '') + (verdacht.g.rechnungsnr ? ' ' + h(verdacht.g.rechnungsnr) : '') + (verdacht.an ? ' an <b>' + h(verdacht.an) + '</b>' : '') + '. Die gehört nicht zu S1 Secure: kein Beleg, keine Vorsteuer, das Geld muss zurückkommen.</div>' +
+      '<div class="chips"><button type="button" class="btn pri small" data-act="bank-art" data-id="' + b.id + '" data-art="fehl" data-notiz="' + h(verdacht.text) + '">Als Fehlüberweisung markieren</button></div></div>';
+    if (wie && !zugeordnet && !verdacht) {
       body += '<div class="card blue" style="padding:12px"><b>Vorschlag: so buchen wie zuletzt</b><div>' + h(wie.lieferant) + ' · ' + h(wie.text) + ' · Konto ' + h(wie.konto) + ' ' + h((window.KONTEN || {})[wie.konto] || '') + ' · ' + (wie.steuerart === 'vst' ? 'Vorsteuer ' + L.eur(wie.ust) : L.STEUERART[wie.steuerart]) + '</div>' +
         '<div class="chips"><button type="button" class="btn pri small" data-act="bank-wie" data-id="' + b.id + '">So buchen (Kontoauszug als Beleg)</button><button type="button" class="btn small" data-act="bank-neu-beleg" data-id="' + b.id + '">Vorher ändern</button></div></div>';
     }
@@ -192,7 +200,7 @@
       }).join('') + '</div>' : '<div class="s">Kein passender Eintrag gefunden.</div>');
     }
     if (!zugeordnet && b.betrag < 0) body += '<div class="chips"><button type="button" class="btn" data-act="bank-upload" data-id="' + b.id + '">' + APP.icon('upload', 16) + ' Rechnung hochladen</button><button type="button" class="btn" data-act="bank-neu-beleg" data-id="' + b.id + '">Ohne Datei buchen</button></div>';
-    var arten = b.betrag < 0 ? [['privat', 'Privat'], ['entnahme', 'Entnahme'], ['unklar', 'Unklar']] : [['einlage', 'Einlage'], ['cashback', 'Cashback / Zinsen'], ['privat', 'Privat'], ['unklar', 'Unklar']];
+    var arten = b.betrag < 0 ? [['privat', 'Privat'], ['entnahme', 'Entnahme'], ['fehl', 'Fehlüberweisung'], ['unklar', 'Unklar']] : [['einlage', 'Einlage'], ['cashback', 'Cashback / Zinsen'], ['fehl', 'Rückzahlung einer Fehlüberweisung'], ['privat', 'Privat'], ['unklar', 'Unklar']];
     body += '<h3>Oder</h3><div class="chips">' + arten.map(function (a) { return '<button type="button" class="btn small" data-act="bank-art" data-id="' + b.id + '" data-art="' + a[0] + '">' + a[1] + '</button>'; }).join('') + '</div>' +
       '<label class="f">Notiz<input class="in" id="bank-notiz" value="' + h(b.notiz || '') + '"></label>' + APP.fragenBlock('bank', [b.id]);
     APP.modal({
@@ -231,15 +239,32 @@
   });
   APP.A['bank-art'] = nach(function (b, el) {
     var art = el.dataset.art, notiz = (document.getElementById('bank-notiz') || {}).value || null;
+    if (art === 'fehl') return alsFehl(b, notiz || el.dataset.notiz || null);
     if (art === 'entnahme' && !notiz) notiz = 'Entnahme Jürgen Schandl';
     if (art === 'einlage' && !notiz) notiz = 'Einlage Jürgen Schandl';
     return APP.upd('bank', { id: b.id }, { art: art, notiz: notiz }).then(function () { APP.schliessen(); APP.toast('Als ' + (ART[art] || [art])[0] + ' markiert.'); });
   });
+  /* Fehlüberweisung: Abbuchung und Rückzahlung gehören zusammen und heben sich auf */
+  function alsFehl(b, notiz) {
+    var ab = b.betrag < 0, gegen = L.fehlGegen(D, b, ab ? ['offen', 'unklar', 'fehl'] : ['offen', 'unklar', 'fehl'])[0] || null;
+    if (ab && !notiz) notiz = 'Fehlüberweisung ' + b.name;
+    var job = APP.upd('bank', { id: b.id }, { art: 'fehl', beleg_gruppe: null, ausgang_id: null, paar_id: gegen ? gegen.id : null, notiz: ab ? notiz : (gegen ? 'Rückzahlung Fehlüberweisung vom ' + L.datum(gegen.datum) + ' (' + gegen.name + ')' : (notiz || 'Rückzahlung einer Fehlüberweisung')) });
+    if (gegen) job = job.then(function () {
+      return APP.upd('bank', { id: gegen.id }, ab ? { art: 'fehl', paar_id: b.id, notiz: 'Rückzahlung Fehlüberweisung vom ' + L.datum(b.datum) + ' (' + b.name + ')' } : { art: 'fehl', paar_id: b.id, notiz: gegen.notiz || 'Fehlüberweisung ' + gegen.name });
+    });
+    return job.then(function () {
+      APP.schliessen();
+      APP.ok(gegen ? (ab ? 'Fehlüberweisung markiert und mit der Rückzahlung vom ' + L.datum(gegen.datum) + ' verbunden.' : 'Rückzahlung mit der Fehlüberweisung vom ' + L.datum(gegen.datum) + ' verbunden.')
+        : (ab ? 'Als Fehlüberweisung markiert. Kommt die Rückzahlung, verbindet die App sie beim Kontoauszug automatisch.' : 'Als Rückzahlung markiert. Die passende Abbuchung fehlt noch.'));
+    });
+  }
   APP.A['bank-notiz'] = nach(function (b) { return APP.upd('bank', { id: b.id }, { notiz: document.getElementById('bank-notiz').value || null }).then(function () { APP.ok('Notiz gespeichert.'); }); });
   APP.A['bank-loesen'] = nach(function (b) {
     var job = Promise.resolve();
     if (b.ausgang_id) job = APP.upd('ausgang', { id: b.ausgang_id }, { bezahlt_am: null, bezahlt_betrag: null });
-    return job.then(function () { return APP.upd('bank', { id: b.id }, { art: 'offen', beleg_gruppe: null, ausgang_id: null }); }).then(function () { APP.schliessen(); APP.toast('Zuordnung gelöst.'); });
+    var p = L.fehlPaar(D, b);
+    if (p) job = job.then(function () { return APP.upd('bank', { id: p.id }, { paar_id: null }); });
+    return job.then(function () { return APP.upd('bank', { id: b.id }, { art: 'offen', beleg_gruppe: null, ausgang_id: null, paar_id: null }); }).then(function () { APP.schliessen(); APP.toast('Zuordnung gelöst.'); });
   });
   APP.A['bank-wie'] = nach(function (b) {
     var w = L.steuerBuchung(b) || L.wieLetztesMal(D, b), gr = APP.uuid();
