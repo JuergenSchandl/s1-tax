@@ -4,6 +4,8 @@
 // geprüfte Monate, Garantie- und Abo-Enden, fehlender Kontoauszug.
 // Legt am Monatsanfang die Entwürfe für IFMS und ÖGK an.
 // Die Schlüssel für die Mitteilungen erzeugt der Dienst beim ersten Lauf selbst.
+// Der Zeitplan weist sich mit einem Dienstschlüssel aus (push_keys.cron_key, Kopfzeile x-dienst);
+// ein Aufruf ohne ihn wird abgelehnt, damit niemand von außen einen Lauf anstoßen kann.
 import webpush from "npm:web-push@3.6.7";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import "./logic.js";
@@ -62,11 +64,11 @@ function wien(d = new Date()) {
 
 // deno-lint-ignore no-explicit-any
 async function vapid(sb: any) {
-  const { data } = await sb.from("push_keys").select("public_key, private_key").eq("id", 1).maybeSingle();
+  const { data } = await sb.from("push_keys").select("public_key, private_key, cron_key").eq("id", 1).maybeSingle();
   if (data) return data;
   const k = webpush.generateVAPIDKeys();
   await sb.from("push_keys").upsert({ id: 1, public_key: k.publicKey, private_key: k.privateKey }, { onConflict: "id", ignoreDuplicates: true });
-  return (await sb.from("push_keys").select("public_key, private_key").eq("id", 1).single()).data;
+  return (await sb.from("push_keys").select("public_key, private_key, cron_key").eq("id", 1).single()).data;
 }
 // deno-lint-ignore no-explicit-any
 async function senden(sb: any, wer: string[], msg: Record<string, string>) {
@@ -119,6 +121,8 @@ Deno.serve(async (req) => {
     if (!m) return json({ error: "Kein Zugang" }, 403);
     ich = m.person;
   }
+  // Aufruf vom Zeitplan: nur mit dem Dienstschlüssel
+  if (!ich && (!keys.cron_key || req.headers.get("x-dienst") !== keys.cron_key)) return json({ error: "Kein Zugang" }, 401);
   if (url.searchParams.has("test")) {
     const sent = await senden(sb, [ich!], { title: "S1 Tax", body: "Mitteilungen sind eingeschaltet.", url: APP, tag: "s1tax-test" });
     return json({ sent });
